@@ -149,7 +149,7 @@
           values={{
             embedding: {
               text: $_('p4.description2-embedding'),
-              href: 'https://docs.turbowarp.org/embedding'
+              href: 'https://docs.bilup.org/embedding'
             }
           }}
         />
@@ -236,7 +236,7 @@
       {/if}
     </div>
     <div>
-      <a href="https://docs.turbowarp.org/packager">{$_('p4.documentation')}</a>
+      <a href="https://docs.bilup.org/packager">{$_('p4.documentation')}</a>
     </div>
     <div>
       <SelectTheme />

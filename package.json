@@ -1,6 +1,6 @@
 {
-  "name": "@turbowarp/packager",
-  "version": "3.0.0",
+  "name": "@bilup/packager",
+  "version": "1.0.0",
   "description": "Converts Scratch projects into HTML files, zip archives, or executable programs for Windows, macOS, and Linux.",
   "main": "dist/packager.js",
   "scripts": {
@@ -18,20 +18,19 @@
     "postpublish": "node src/build/nodejs/update-readme.js restore",
     "deploy": "NODE_ENV=production npm run build-prod && gh-pages -d dist"
   },
-  "author": "GarboMuffin",
-  "homepage": "https://github.com/TurboWarp/packager#readme",
+  "author": "Bilup",
+  "homepage": "https://github.com/Bilup/packager#readme",
   "keywords": [
     "scratch",
     "packager"
   ],
   "bugs": {
-    "url": "https://github.com/TurboWarp/packager/issues"
+    "url": "https://github.com/Bilup/packager/issues"
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/TurboWarp/packager.git"
+    "url": "https://github.com/Bilup/packager.git"
   },
-  "funding": "https://github.com/sponsors/GarboMuffin",
   "license": "MPL-2.0",
   "dependencies": {
     "@fiahfy/icns": "0.0.7",
