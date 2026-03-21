@@ -4,7 +4,7 @@
   export let slug;
   export let href;
 
-  const link = slug ? `https://docs.turbowarp.org/${slug}` : href;
+  const link = slug ? `https://docs.bilup.org/${slug}` : href;
 </script>
 
 <style>
