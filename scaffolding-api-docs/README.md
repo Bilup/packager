@@ -1,5 +1,7 @@
 # Scaffolding API
 
+## THERE'S NO NPM PACKAGE FOR NOW, SO THE INSTALLATION BY NPM IS UNABLE TO USE
+
 ## Scaffolding's API is in an ALPHA state. It WILL change in ways that are backwards incompatible. Please pin to exact versions to avoid pain later!
 
 ## This documentation is very work in progress. Report any errors you find or any issues you encounter.
@@ -55,10 +57,10 @@ You can only load one version of Scaffolding on a page, but you can create as ma
 
 ```html
 <!-- for scaffolding-min: -->
-<script src="https://cdn.jsdelivr.net/npm/@turbowarp/packager@0.0.0/dist/scaffolding/scaffolding-min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@bilup/packager@0.0.0/dist/scaffolding/scaffolding-min.js"></script>
 
 <!-- for scaffolding-full -->
-<script src="https://cdn.jsdelivr.net/npm/@turbowarp/packager@0.0.0/dist/scaffolding/scaffolding-full.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@bilup/packager@0.0.0/dist/scaffolding/scaffolding-full.js"></script>
 ```
 
 Replace `0.0.0` with the latest release from https://github.com/TurboWarp/packager/releases, for example `1.0.0`.
@@ -70,20 +72,20 @@ If you don't want to use a CDN, you can download the JS file linked by the scrip
 ### From npm
 
 ```bash
-npm install --save-exact @turbowarp/packager
+npm install --save-exact @bilup/packager
 ```
 
 ```js
 // for scaffolding-min:
-require('@turbowarp/packager/dist/scaffolding/scaffolding-min.js');
+require('@bilup/packager/dist/scaffolding/scaffolding-min.js');
 // for scaffolding-full:
-require('@turbowarp/packager/dist/scaffolding/scaffolding-full.js');
+require('@bilup/packager/dist/scaffolding/scaffolding-full.js');
 
 // or, if you prefer ES6 imports,
 // for scaffolding-min:
-import '@turbowarp/packager/dist/scaffolding/scaffolding-min.js';
+import '@bilup/packager/dist/scaffolding/scaffolding-min.js';
 // for scaffolding-full:
-import '@turbowarp/packager/dist/scaffolding/scaffolding-full.js';
+import '@bilup/packager/dist/scaffolding/scaffolding-full.js';
 ```
 
 Note that regardless of how you import Scaffolding, it is exported on `window.Scaffolding`, not on the module. This is strange and weird; it may change in the future.
