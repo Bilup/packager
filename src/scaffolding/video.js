@@ -1,5 +1,5 @@
-// https://github.com/TurboWarp/scratch-gui/blob/develop/src/lib/video/camera.js
-// https://github.com/TurboWarp/scratch-gui/blob/develop/src/lib/video/video-provider.js
+// https://github.com/Bilup/scratch-gui/blob/develop/src/lib/video/camera.js
+// https://github.com/Bilup/scratch-gui/blob/develop/src/lib/video/video-provider.js
 
 const getUserMedia = (opts) => {
   if (!navigator.mediaDevices) {

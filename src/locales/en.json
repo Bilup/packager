@@ -340,7 +340,7 @@
       "developer_comment": "Option to enable pointerlock"
     },
     "pointerlockHelp": {
-      "string": "Based on a TurboWarp Experiment."
+      "string": "Based on a Bilup Experiment."
     },
     "gamepad": {
       "string": "Support USB or Bluetooth gamepads/controllers"

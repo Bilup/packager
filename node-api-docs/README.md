@@ -14,11 +14,11 @@ We suggest that you use `--save-exact` (or, with yarn, `--exact`) to make sure y
 
 The Node.js API is still in beta.
 
-There are no promises of API stability between updates even across minor updates. Always pin to an exact version and don't update without testing. We don't go out of our way to break the API, but we don't let it stop us from making changes. We try to mention noteworthy changes in the [GitHub releases](https://github.com/TurboWarp/packager/releases) changelog.
+There are no promises of API stability between updates even across minor updates. Always pin to an exact version and don't update without testing. We don't go out of our way to break the API, but we don't let it stop us from making changes. We try to mention noteworthy changes in the [GitHub releases](https://github.com/Bilup/packager/releases) changelog.
 
 ### Release cadence
 
-We intend to release an updated version of the npm module to npm with every update of [TurboWarp Desktop](https://github.com/TurboWarp/desktop), which currently happens about once a month.
+We intend to release an updated version of the npm module to npm with every update of [Bilup Desktop](https://github.com/Bilup/desktop), which currently happens about once a month.
 
 ### Feature support
 

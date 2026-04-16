@@ -271,7 +271,7 @@ class Scaffolding extends EventTarget {
     const projectAreaHeight = Math.max(1, totalHeight - offsetFromTop - offsetFromBottom);
 
     if (this.resizeMode === 'dynamic-resize') {
-      // setStageSize is a TurboWarp-specific method
+      // setStageSize is a Bilup-specific method
       if (this.vm.setStageSize) {
         this.width = projectAreaWidth;
         this.height = projectAreaHeight;
@@ -319,7 +319,7 @@ class Scaffolding extends EventTarget {
     this.vm.on('PROJECT_RUN_START', () => this.dispatchEvent(new Event('PROJECT_RUN_START')));
     this.vm.on('PROJECT_RUN_STOP', () => this.dispatchEvent(new Event('PROJECT_RUN_STOP')));
 
-    // TurboWarp-specific VM extensions
+    // Bilup-specific VM extensions
     if (this.usePackagedRuntime && this.vm.convertToPackagedRuntime) {
       this.vm.convertToPackagedRuntime();
     }
@@ -348,7 +348,7 @@ class Scaffolding extends EventTarget {
       this.height / 2
     );
     this.vm.attachRenderer(this.renderer);
-    // TurboWarp-specific renderer extensions
+    // Bilup-specific renderer extensions
     if (this.renderer.overlayContainer) {
       this._layers.insertBefore(this.renderer.overlayContainer, this._overlaysOuter);
     }

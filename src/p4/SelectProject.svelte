@@ -240,7 +240,7 @@
           <input type="text" value={getDisplayedProjectURL()} spellcheck="false" on:keypress={submitOnEnter} on:input={handleInput} on:focus={handleFocus}>
         {/if}
       </div>
-      <!-- TurboWarp Desktop looks for the file-input-option class for special handling, so be careful when modifying this. -->
+      <!-- Bilup Desktop looks for the file-input-option class for special handling, so be careful when modifying this. -->
       <div class="option file-input-option">
         <label>
           <input type="radio" name="project-type" bind:group={$type} value="file">

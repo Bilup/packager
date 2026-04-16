@@ -1,4 +1,4 @@
-// TODO: Extract this and TurboWarp/scratch-vm's compression to a shared module
+// TODO: Extract this and Bilup/scratch-vm's compression to a shared module
 
 // We don't generate new IDs using numbers at this time because their enumeration
 // order can affect script execution order as they always come first.

@@ -1,4 +1,4 @@
-This is a modified version of https://github.com/TurboWarp/scratch-parser/
+This is a modified version of https://github.com/Bilup/scratch-parser/
 All validation logic has been removed to reduce file size and improve performance.
 scratch-parser license is copied below for convenience:
 
