@@ -13,6 +13,7 @@
     width: 200px;
     height: 10px;
     border: 1px solid currentColor;
+    border-radius: 5px;
     margin-bottom: 4px;
     background: black;
   }
@@ -23,6 +24,7 @@
     height: 100%;
     width: 0;
     background: white;
+    border-radius: 5px;
   }
   .text {
     font-style: italic;

@@ -57,7 +57,7 @@
     color: black;
   }
   :global([theme="dark"]) {
-    background: #111;
+    background: #333;
     color: #eee;
     color-scheme: dark;
   }

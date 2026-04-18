@@ -20,7 +20,7 @@
     box-shadow: 0 2px 0.5em 0.1em rgba(0, 0, 0, 0.2);
   }
   :global([theme="dark"]) .card {
-    background: #222;
+    background: #444;
   }
   .caption {
     font-style: italic;
@@ -47,7 +47,7 @@
   class:caption
   class:modal
   class:center={caption || center}
-  style:border-top={accent ? `6px solid ${accent}` : ''}
+  style:border-left={accent ? `6px solid ${accent}` : ''}
 >
   {#if reset}
     <div class="reset">

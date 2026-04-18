@@ -32,7 +32,7 @@ If this is set to an empty string, the link is removed.
 module.exports = {
   APP_NAME: 'Bilup Packager',
   WEBSITE: 'https://packager.bilup.org/',
-  COPYRIGHT_NOTICE: `Copyright (C) 2021-2024 Thomas Weber
+  COPYRIGHT_NOTICE: `Copyright (C) 2021-2024 RyaninCn11
 
 The Source Code Form of this program is available under the terms of the
 Mozilla Public License, v. 2.0. You can obtain a copy of the license at
@@ -47,6 +47,6 @@ https://www.mozilla.org/en-US/MPL/2.0/.`,
     name: 'GitHub',
     link: 'https://github.com/Bilup/packager/issues'
   },
-  DONATE: 'about:blank#we-dont-accept-donate-for-now',
+  DONATE: '',
   PRIVACY_POLICY: 'https://editors.bilup.org/privacy.html',
 };
