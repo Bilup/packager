@@ -216,7 +216,7 @@
         });
       }
 
-      scaffolding.addCloudProvider(new Scaffolding.Cloud.WebSocketProvider('wss://clouddata.turbowarp.org', PROJECT_ID));
+      scaffolding.addCloudProvider(new Scaffolding.Cloud.WebSocketProvider('wss://clouddata.bilup.org', PROJECT_ID));
 
       const getProjectData = async () => {
         const metadataResponse = await fetch(`https://trampoline.turbowarp.org/api/projects/${PROJECT_ID}`);

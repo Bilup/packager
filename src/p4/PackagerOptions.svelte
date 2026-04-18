@@ -678,7 +678,7 @@
           <label class="option">
             {$_('options.cloudVariablesHost')}
             <!-- Examples of valid values: -->
-            <!-- wss://clouddata.turbowarp.org -->
+            <!-- wss://clouddata.bilup.org -->
             <!-- ws:localhost:8080 -->
             <input type="text" bind:value={$options.cloudVariables.cloudHost} pattern="wss?:.*">
           </label>

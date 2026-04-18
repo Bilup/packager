@@ -105,7 +105,7 @@ class WebSocketProvider {
   }
 
   openConnection () {
-    // clouddata.turbowarp.org will refuse, but other servers might allow it, so let it through anyways
+    // clouddata.bilup.org will refuse, but other servers might allow it, so let it through anyways
     if (!this.projectId) {
       console.warn('Project ID is empty. Cloud variable connection is unlikely to work.');
     }
