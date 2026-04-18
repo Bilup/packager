@@ -1791,7 +1791,7 @@ Packager.DEFAULT_OPTIONS = () => ({
     packageName: Packager.getDefaultPackageNameFromFileName(''),
     windowTitle: Packager.getWindowTitleFromFileName(''),
     windowMode: 'window',
-    version: '1.0.0',
+    version: '1.1.0',
     escapeBehavior: 'unfullscreen-only',
     windowControls: 'default'
   },
