@@ -48,5 +48,5 @@ https://www.mozilla.org/en-US/MPL/2.0/.`,
     link: 'https://github.com/Bilup/packager/issues'
   },
   DONATE: '',
-  PRIVACY_POLICY: 'https://editors.bilup.org/privacy.html',
+  PRIVACY_POLICY: 'https://editor.bilup.org/privacy.html',
 };
