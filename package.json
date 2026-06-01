@@ -44,7 +44,7 @@
   "devDependencies": {
     "@babel/core": "^7.16.5",
     "@babel/preset-env": "^7.16.5",
-    "@turbowarp/scratch-storage": "^0.0.202403251715",
+    "@bilup/scratch-storage": "github:Bilup/scratch-storage#develop-builds",
     "@bilup/scratch-svg-renderer": "github:Bilup/scratch-svg-renderer#develop",
     "babel-jest": "^27.4.5",
     "babel-loader": "^8.2.3",
