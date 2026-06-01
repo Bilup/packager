@@ -2,7 +2,7 @@
 
 import VM from 'scratch-vm';
 import Renderer from 'scratch-render';
-import ScratchStorage from '@turbowarp/scratch-storage';
+import ScratchStorage from '@bilup/scratch-storage';
 import AudioEngine from 'scratch-audio';
 import {BitmapAdapter} from '@bilup/scratch-svg-renderer';
 
