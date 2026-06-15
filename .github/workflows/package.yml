@@ -1,0 +1,40 @@
+name: Update package-lock.json
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 2 * * 1'  # 每周一凌晨 2:00 UTC
+
+permissions:
+  contents: write
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: true
+          ref: main
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Delete package-lock.json
+        run: rm -f package-lock.json
+
+      - name: Regenerate package-lock.json
+        run: npm i --package-lock-only --ignore-scripts --loglevel verbose
+
+      - name: Commit and push
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          
+          git add package-lock.json
+          git commit -m "chore: update package-lock.json" || echo "No changes"
+          git push origin main
