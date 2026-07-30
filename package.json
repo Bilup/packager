@@ -8,6 +8,8 @@
     "clean": "rimraf dist",
     "build": "npm run clean && webpack",
     "build-prod": "cross-env NODE_ENV=production npm run build",
+    "link": "npm link --no-save ../scratch-vm ../scratch-render",
+    "build-mistwarp": "npm run link && npm run build-prod",
     "watch": "webpack --watch",
     "build-standalone": "cross-env STANDALONE=1 npm run build && node src/build/generate-standalone.js",
     "build-standalone-prod": "cross-env NODE_ENV=production npm run build-standalone",

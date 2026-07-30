@@ -44,6 +44,7 @@ const makeScaffolding = ({full}) => ({
     'scaffolding-min': './src/scaffolding/export.js'
   },
   resolve: {
+    symlinks: false,
     alias: {
       'text-encoding$': path.resolve(__dirname, 'src', 'scaffolding', 'text-encoding'),
       'htmlparser2$': path.resolve(__dirname, 'src', 'scaffolding', 'htmlparser2'),

@@ -20,6 +20,18 @@ jobs:
     steps:
     - name: Checkout
       uses: actions/checkout@v4
+    - name: Checkout MistWarp VM
+      uses: actions/checkout@v4
+      with:
+        repository: MistWarp/scratch-vm
+        ref: develop
+        path: scratch-vm
+    - name: Checkout MistWarp renderer
+      uses: actions/checkout@v4
+      with:
+        repository: MistWarp/scratch-render
+        ref: develop
+        path: scratch-render
     - name: Setup GitHub Pages
       id: pages
       uses: actions/configure-pages@v4
@@ -30,6 +42,8 @@ jobs:
         cache: 'npm'
     - name: Install dependencies
       run: npm ci
+    - name: Link MistWarp engines
+      run: npm link --no-save ./scratch-vm ./scratch-render
     - name: Test
       run: npm test
     - name: Build website

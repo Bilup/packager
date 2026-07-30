@@ -15,6 +15,8 @@ const files = [
   ...getAllFiles('./src/scaffolding/**/*'),
   ...getAllFiles('./src/addons/**/*'),
   ...getAllFiles('./src/common/**/*'),
+  ...getAllFiles('./node_modules/scratch-vm/src/**/*'),
+  ...getAllFiles('./node_modules/scratch-render/src/**/*'),
   path.join(root, 'webpack.config.js'),
   path.join(root, 'package.json'),
   path.join(root, 'package-lock.json')
