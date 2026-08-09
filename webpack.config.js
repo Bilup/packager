@@ -66,6 +66,17 @@ const makeScaffolding = ({full}) => ({
         }
       },
       {
+        test: /\.mjs$/,
+        loader: 'babel-loader',
+        include: [
+          path.resolve(__dirname, 'node_modules')
+        ],
+        options: {
+          babelrc: false,
+          presets: ['@babel/preset-env']
+        }
+      },
+      {
         test: /\.(svg|png)$/i,
         use: [{
           loader: 'url-loader'
