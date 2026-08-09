@@ -7,11 +7,12 @@ const allMessages = {
   en: () => englishMessages,
   // Generated code:
   /*===*/
-  "zh-cn": () => require("./zh-cn.json")
+  "zh-cn": () => require("./zh-cn.json"),
+  "zh-tw": () => require("./zh-tw.json"),
   /*===*/
 };
 
-const KNOWN_GOOD_LANGUAGES = ['en', 'zh-cn'];
+const KNOWN_GOOD_LANGUAGES = ['en', 'zh-cn', 'zh-tw'];
 const getInitialLocale = () => [
   navigator.language.toLowerCase(),
   navigator.language.toLowerCase().split('-')[0]
