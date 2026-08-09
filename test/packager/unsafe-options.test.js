@@ -27,3 +27,16 @@ test('unsafe cloud behaviors', () => {
   options.cloudVariables.unsafeCloudBehaviors = true;
   expect(Packager.usesUnsafeOptions(options)).toBe(true);
 });
+
+test('default CSP is not unsafe', () => {
+  // The UI backfills custom.csp from the default; that must not be flagged as unsafe.
+  const options = Packager.DEFAULT_OPTIONS();
+  options.custom.csp = Packager.DEFAULT_OPTIONS().custom.csp;
+  expect(Packager.usesUnsafeOptions(options)).toBe(false);
+});
+
+test('custom CSP', () => {
+  const options = Packager.DEFAULT_OPTIONS();
+  options.custom.csp = "default-src 'self'";
+  expect(Packager.usesUnsafeOptions(options)).toBe(true);
+});
