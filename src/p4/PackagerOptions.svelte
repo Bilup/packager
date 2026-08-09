@@ -412,7 +412,7 @@
         }}>
         {$_('options.removeMiscLimits')}
       </label>
-      <LearnMore slug="remove-misc-limits" />
+      <LearnMore slug="remove-limits" />
     </div>
     <label class="option">
       {$_('options.username')}
@@ -448,7 +448,7 @@
       <label class="option">
         <input type="radio" name="resize-mode" value="dynamic-resize" bind:group={$options.resizeMode}>
         {$_('options.dynamicResize')}
-        <LearnMore slug="packager/dynamic-stage-resize" />
+        <LearnMore slug="../packager/dynamic-stage-resize" />
       </label>
     </div>
   </div>
@@ -692,7 +692,7 @@
           <input type="checkbox" bind:checked={$options.cloudVariables.specialCloudBehaviors}>
           {$_('options.specialCloudBehaviors')}
         </label>
-        <LearnMore slug="packager/special-cloud-behaviors" />
+        <LearnMore slug="../packager/special-cloud-behaviors" />
       </div>
 
       <div class="option">
@@ -700,7 +700,7 @@
           <input type="checkbox" bind:checked={$options.cloudVariables.unsafeCloudBehaviors}>
           {$_('options.unsafeCloudBehaviors')}
         </label>
-        <LearnMore slug="packager/special-cloud-behaviors#eval" />
+        <LearnMore slug="../packager/special-cloud-behaviors#eval" />
       </div>
       {#if $options.cloudVariables.unsafeCloudBehaviors}
         <p class="warning">{$_('options.unsafeCloudBehaviorsWarning')}</p>
@@ -750,7 +750,7 @@
       <label class="option">
         {$_('options.customExtensions')}
         <!-- TODO: use the user-facing documentation when that becomes available -->
-        <LearnMore slug="development/custom-extensions" />
+        <LearnMore slug="../building-extensions/introduction" />
         <CustomExtensions bind:extensions={$options.extensions} />
         <p class="warning">{$_('options.customExtensionsSecurity')}</p>
       </label>

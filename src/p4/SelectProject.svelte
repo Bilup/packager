@@ -271,8 +271,8 @@
           message={$_('select.unsharedProjectsMore')}
           values={{
             link: {
-              text: 'https://docs.bilup.org/unshared-projects',
-              href: 'https://docs.bilup.org/unshared-projects',
+              text: 'https://docs.bilup.org/advanced/unshared-projects',
+              href: 'https://docs.bilup.org/advanced/unshared-projects',
               newTab: true
             }
           }}
