@@ -72,6 +72,9 @@ importers:
       jest:
         specifier: ^27.4.5
         version: 27.5.1
+      raw-loader:
+        specifier: 0.5.1
+        version: 0.5.1
       rimraf:
         specifier: ^2.7.1
         version: 2.7.1
