@@ -564,6 +564,24 @@
     "maxTextureDimension": {
       "string": "Increase max vector costume resolution to make large costumes look better. May increase memory use and cause crashes."
     },
+    "removeProjectData": {
+      "string": "Remove project data from output (requires compiler)"
+    },
+    "removeProjectDataWarning": {
+      "string": "Warning: Removing project data prevents extracting the original Scratch project. Only works when the compiler is enabled."
+    },
+    "antiTamper": {
+      "string": "Enable anti-tamper measures (disable right-click, F12, DevTools)"
+    },
+    "obfuscateJS": {
+      "string": "Obfuscate JavaScript code (base64 encode + eval at runtime)"
+    },
+    "encryptProjectData": {
+      "string": "Encrypt project data with random XOR key"
+    },
+    "stripElectron": {
+      "string": "Strip unnecessary files from Electron (reduce EXE size)"
+    },
     "steamworksExtension": {
       "string": "Steamworks Extension",
       "developer_comment": "Title of section that appears when using the Steamworks extension"

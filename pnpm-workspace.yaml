@@ -1,0 +1,3 @@
+packages:
+  - 'electron-bin'
+storeDir: e:\Bilup\packager\.pnpm-store

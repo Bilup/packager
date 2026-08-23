@@ -278,6 +278,17 @@ class Packager extends EventTarget {
       texts.push(await this.fetchLargeAsset('addons', 'text'));
     }
     this.script = texts.join('\n').replace(/<\/script>/g,"</scri'+'pt>");
+    // Generate obfuscated version: base64-encode and wrap in eval(atob())
+    if (this.options.obfuscateJS) {
+      // Split into chunks to avoid browser memory issues with very large strings
+      const CHUNK_SIZE = 1024 * 512; // 512KB chunks
+      const chunks = [];
+      for (let i = 0; i < this.script.length; i += CHUNK_SIZE) {
+        const chunk = this.script.substring(i, i + CHUNK_SIZE);
+        chunks.push(btoa(unescape(encodeURIComponent(chunk))));
+      }
+      this.obfuscatedScript = chunks;
+    }
   }
 
   computeWindowSize () {
@@ -505,6 +516,45 @@ cd "$(dirname "$0")"
       }
 
       setFileFast(zip, newPath, file);
+    }
+
+    // Strip unnecessary files from Electron distribution to reduce EXE size
+    if (this.options.stripElectron) {
+      const stripPatterns = [
+        // Software rendering (not needed for Scratch games)
+        'swiftshader/',
+        'libEGL',
+        'libGLESv2',
+        'vk_swiftshader',
+        // DirectX shader compiler (not needed for Chromium's built-in)
+        'd3dcompiler_47.dll',
+        // FFmpeg (not needed for Scratch games)
+        'ffmpeg.dll',
+        'ffmpeg.so',
+        'ffmpeg.dylib',
+        // Snap and SNAP packages
+        'snap/',
+        // macOS helper apps (keep only the main app)
+        ...(isMac ? [
+          `${packageName}.app/Contents/Frameworks/Electron Helper (GPU).app/`,
+          `${packageName}.app/Contents/Frameworks/Electron Helper (Renderer).app/`,
+          `${packageName}.app/Contents/Frameworks/Electron Helper (Plugin).app/`,
+        ] : []),
+        // Binary patches
+        'resources/electron.asar',
+      ];
+      for (const path of Object.keys(zip.files)) {
+        const shouldStrip = stripPatterns.some((pattern) => path.includes(pattern));
+        if (shouldStrip) {
+          zip.remove(path);
+        }
+      }
+      // Keep only en-US locale
+      for (const path of Object.keys(zip.files)) {
+        if (path.includes('locales/') && !path.includes('en-US')) {
+          zip.remove(path);
+        }
+      }
     }
 
     const rootPrefix = isMac ? '' : `${packageName}/`;
@@ -992,6 +1042,21 @@ cd "$(dirname "$0")"
     return `${this.options.app.windowTitle}.${extension}`;
   }
 
+  generateObfuscatedScriptTag () {
+    // Generate a script tag that loads the obfuscated (base64-encoded) script
+    // and reconstructs it at runtime via eval(atob())
+    const chunks = this.obfuscatedScript || [];
+    const chunksJSON = JSON.stringify(chunks);
+    return `<script>
+(function(){
+var _$_c=${chunksJSON};
+var _$_s='';
+for(var _$_i=0;_$_i<_$_c.length;_$_i++){_$_s+=decodeURIComponent(escape(atob(_$_c[_$_i])))};
+eval(_$_s);
+})();
+<\\/script>`;
+  }
+
   async generateGetProjectData () {
     const result = [];
     let getProjectDataFunction = '';
@@ -1004,9 +1069,48 @@ cd "$(dirname "$0")"
       storageProgressStart = PROGRESS_FETCHED_COMPRESSED;
       storageProgressEnd = PROGRESS_EXTRACTED_COMPRESSED;
 
-      const projectData = new Uint8Array(this.project.arrayBuffer);
+      let projectData = new Uint8Array(this.project.arrayBuffer);
+
+      // Remove scripts from project data to prevent unpacking
+      if (this.options.removeProjectData && this.project.type === 'sb3') {
+        try {
+          const JSZip = await getJSZip();
+          const zip = await JSZip.loadAsync(projectData);
+          const projectJSONFile = zip.file('project.json');
+          if (projectJSONFile) {
+            const projectJSON = JSON.parse(await projectJSONFile.async('string'));
+            for (const target of projectJSON.targets) {
+              delete target.blocks;
+            }
+            const compressed = await (await getJSZip()).loadAsync(projectData);
+            compressed.file('project.json', JSON.stringify(projectJSON));
+            const modifiedBuffer = await compressed.generateAsync({
+              type: 'uint8array',
+              compression: 'DEFLATE'
+            });
+            projectData = new Uint8Array(modifiedBuffer);
+          }
+        } catch (e) {
+          // If stripping fails, continue with original data
+          console.warn('Failed to remove project data:', e);
+        }
+      }
 
       // keep this up-to-date with base85.js
+      // Encrypt project data if option is enabled
+      let encryptionKey = null;
+      if (this.options.encryptProjectData) {
+        // Generate a random 32-byte XOR key
+        const key = new Uint8Array(32);
+        for (let i = 0; i < 32; i++) {
+          key[i] = Math.floor(Math.random() * 256);
+        }
+        // XOR the project data with the key
+        for (let i = 0; i < projectData.length; i++) {
+          projectData[i] ^= key[i % 32];
+        }
+        encryptionKey = btoa(String.fromCharCode(...key));
+      }
       result.push(`
       <script>
       const getBase85DecodeValue = (code) => {
@@ -1052,7 +1156,13 @@ cd "$(dirname "$0")"
       getProjectDataFunction = `() => {
         const buffer = projectDecodeBuffer;
         projectDecodeBuffer = null; // Allow GC
-        return Promise.resolve(new Uint8Array(buffer, 0, ${projectData.length}));
+        const data = new Uint8Array(buffer, 0, ${projectData.length});
+        ${encryptionKey ? `// Decrypt project data
+        const key = Uint8Array.from(atob("${encryptionKey}"), (c) => c.charCodeAt(0));
+        for (let i = 0; i < data.length; i++) {
+          data[i] ^= key[i % 32];
+        }` : ''}
+        return Promise.resolve(data);
       }`;
     } else {
       let src;
@@ -1229,6 +1339,20 @@ cd "$(dirname "$0")"
   <!-- We only include this to explicitly loosen the CSP of various packager environments. It does not provide any security. -->
   <meta http-equiv="Content-Security-Policy" content="${escapeXML(this.options.csp)}">
   <title>${escapeXML(this.options.app.windowTitle)}</title>
+  ${this.options.antiTamper ? `<script>
+  // Anti-tamper measures
+  document.addEventListener('contextmenu', (e) => e.preventDefault());
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'F12' ||
+        (e.ctrlKey && e.shiftKey && (e.key === 'I' || e.key === 'J' || e.key === 'C')) ||
+        (e.ctrlKey && e.key === 'U') ||
+        (e.ctrlKey && e.shiftKey && e.key === 'S')) {
+      e.preventDefault();
+      return false;
+    }
+  });
+  document.addEventListener('selectstart', (e) => e.preventDefault());
+  </script>` : ''}
   <style>
     body {
       color: ${this.options.appearance.foreground};
@@ -1400,7 +1524,7 @@ cd "$(dirname "$0")"
     </details>
   </div>
 
-  ${this.options.target === 'html' ? `<script>${this.script}</script>` : '<script src="script.js"></script>'}
+  ${this.options.target === 'html' && this.options.obfuscateJS ? this.generateObfuscatedScriptTag() : (this.options.target === 'html' ? `<script>${this.script}</script>` : '<script src="script.js"></script>')}
   <script>${removeUnnecessaryEmptyLines(`
     const appElement = document.getElementById('app');
     const launchScreen = document.getElementById('launch');
@@ -1665,7 +1789,18 @@ cd "$(dirname "$0")"
         zip.file('project.zip', this.project.arrayBuffer);
       }
       zip.file('index.html', html);
-      zip.file('script.js', this.script);
+      if (this.options.obfuscateJS && this.obfuscatedScript) {
+        const chunks = this.obfuscatedScript;
+        const chunksJSON = JSON.stringify(chunks);
+        zip.file('script.js', `(function(){
+var _$_c=${chunksJSON};
+var _$_s='';
+for(var _$_i=0;_$_i<_$_c.length;_$_i++){_$_s+=decodeURIComponent(escape(atob(_$_c[_$_i])))};
+eval(_$_s);
+})();`);
+      } else {
+        zip.file('script.js', this.script);
+      }
 
       if (this.options.target.startsWith('nwjs-')) {
         zip = await this.addNwJS(zip);
@@ -1784,6 +1919,11 @@ Packager.DEFAULT_OPTIONS = () => ({
     enabled: true,
     warpTimer: false
   },
+  removeProjectData: false,
+  antiTamper: false,
+  obfuscateJS: false,
+  encryptProjectData: false,
+  stripElectron: false,
   packagedRuntime: true,
   target: 'html',
   csp: "default-src * 'self' 'unsafe-inline' 'unsafe-eval' data: blob:",

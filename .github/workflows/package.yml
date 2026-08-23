@@ -1,4 +1,4 @@
-name: Update package-lock.json
+name: Update pnpm-lock.yaml
 
 on:
   workflow_dispatch:
@@ -18,23 +18,28 @@ jobs:
           persist-credentials: true
           ref: main
 
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
       - name: Install Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 20
-          cache: npm
+          cache: pnpm
 
-      - name: Delete package-lock.json
-        run: rm -f package-lock.json
+      - name: Delete pnpm-lock.yaml
+        run: rm -f pnpm-lock.yaml
 
-      - name: Regenerate package-lock.json
-        run: npm i --package-lock-only --ignore-scripts --loglevel verbose
+      - name: Regenerate pnpm-lock.yaml
+        run: pnpm install --no-frozen-lockfile --ignore-scripts --loglevel verbose
 
       - name: Commit and push
         run: |
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
-          
-          git add package-lock.json
-          git commit -m "chore: update package-lock.json" || echo "No changes"
+
+          git add pnpm-lock.yaml
+          git commit -m "chore: update pnpm-lock.yaml" || echo "No changes"
           git push origin main

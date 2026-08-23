@@ -44,8 +44,8 @@
   "devDependencies": {
     "@babel/core": "^7.16.5",
     "@babel/preset-env": "^7.16.5",
-    "@bilup/scratch-storage": "github:Bilup/scratch-storage#develop-builds",
-    "@bilup/scratch-svg-renderer": "github:Bilup/scratch-svg-renderer#develop",
+    "@bilup/scratch-storage": "https://github.com/Bilup/scratch-storage/tarball/54e6f928b22aa075ce09908aac6c287a654a62a6",
+    "@bilup/scratch-svg-renderer": "https://github.com/Bilup/scratch-svg-renderer/tarball/6ce586a4ad1b9b98441eee6d7304f529be0ae9ef",
     "babel-jest": "^27.4.5",
     "babel-loader": "^8.2.3",
     "copy-webpack-plugin": "^6.4.1",
@@ -57,9 +57,9 @@
     "husky": "^9.1.7",
     "jest": "^27.4.5",
     "rimraf": "^2.7.1",
-    "scratch-audio": "github:Bilup/scratch-audio#develop-builds",
-    "scratch-render": "github:Bilup/scratch-render#develop-builds",
-    "scratch-vm": "github:Bilup/scratch-vm#develop-builds",
+    "scratch-audio": "https://github.com/Bilup/scratch-audio/tarball/6b71026b568d63998b647409ffe360cc6d772c32",
+    "scratch-render": "https://github.com/Bilup/scratch-render/tarball/a2f262093a8d8dc83409942f2068b3e762634a77",
+    "scratch-vm": "https://github.com/Bilup/scratch-vm/tarball/eb38a99bb2c090279e4ed1b0c1b5f2961393f7fc",
     "style-loader": "^2.0.0",
     "svelte": "^3.44.3",
     "svelte-loader": "^3.1.2",
@@ -73,6 +73,12 @@
   "overrides": {
     "webpack@4.47.0": {
       "terser-webpack-plugin": "^4.2.3"
-    }
+    },
+    "@bilup/scratch-svg-renderer": "https://github.com/Bilup/scratch-svg-renderer/tarball/6ce586a4ad1b9b98441eee6d7304f529be0ae9ef",
+    "scratch-render-fonts": "https://github.com/Bilup/scratch-render-fonts/tarball/d09642667e6b3ca7cf9420cd92350ce177694ad5",
+    "scratch-parser": "https://github.com/Bilup/scratch-parser/tarball/87a26f096e719e2204f96bfb859e10a709449e8"
+  },
+  "pnpm": {
+    "store-dir": ".pnpm-store"
   }
 }

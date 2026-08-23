@@ -104,7 +104,12 @@
     $options.custom.js !== '' ||
     $options.projectId !== defaultOptions.projectId ||
     $options.packagedRuntime !== defaultOptions.packagedRuntime ||
-    $options.maxTextureDimension !== defaultOptions.maxTextureDimension
+    $options.maxTextureDimension !== defaultOptions.maxTextureDimension ||
+    $options.removeProjectData !== defaultOptions.removeProjectData ||
+    $options.antiTamper !== defaultOptions.antiTamper ||
+    $options.obfuscateJS !== defaultOptions.obfuscateJS ||
+    $options.encryptProjectData !== defaultOptions.encryptProjectData ||
+    $options.stripElectron !== defaultOptions.stripElectron
   );
 
   const automaticallyCenterCursor = () => {
@@ -721,7 +726,12 @@
       'bakeExtensions',
       'custom',
       'projectId',
-      'maxTextureDimension'
+      'maxTextureDimension',
+      'removeProjectData',
+      'antiTamper',
+      'obfuscateJS',
+      'encryptProjectData',
+      'stripElectron'
     ]);
   }}
 >
@@ -791,6 +801,46 @@
         }} />
         {$_('options.maxTextureDimension')}
       </label>
+
+      <div class="option">
+        <label>
+          <input type="checkbox" bind:checked={$options.removeProjectData}>
+          {$_('options.removeProjectData')}
+        </label>
+      </div>
+      {#if $options.removeProjectData}
+        <p class="warning">{$_('options.removeProjectDataWarning')}</p>
+      {/if}
+
+      <div class="option">
+        <label>
+          <input type="checkbox" bind:checked={$options.antiTamper}>
+          {$_('options.antiTamper')}
+        </label>
+      </div>
+
+      <div class="option">
+        <label>
+          <input type="checkbox" bind:checked={$options.obfuscateJS}>
+          {$_('options.obfuscateJS')}
+        </label>
+      </div>
+
+      <div class="option">
+        <label>
+          <input type="checkbox" bind:checked={$options.encryptProjectData}>
+          {$_('options.encryptProjectData')}
+        </label>
+      </div>
+
+      {#if $options.target.includes('electron')}
+        <div class="option">
+          <label>
+            <input type="checkbox" bind:checked={$options.stripElectron}>
+            {$_('options.stripElectron')}
+          </label>
+        </div>
+      {/if}
     </details>
   </div>
 </Section>

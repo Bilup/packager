@@ -1,10 +1,9 @@
-name: Build
+name: Release
 
 on:
   push:
-    branches: [ main ]
-  pull_request:
-    branches: [ main ]
+    tags:
+      - 'v*'
 
 jobs:
   build:
@@ -28,8 +27,23 @@ jobs:
       run: pnpm test
     - name: Build standalone
       run: pnpm run build-standalone-prod
-    - name: Upload standalone artifact
+    - name: Upload artifact
       uses: actions/upload-artifact@v4
       with:
         name: standalone
         path: dist/standalone.html
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+    - uses: actions/download-artifact@v4
+      with:
+        name: standalone
+    - name: Create Release
+      uses: softprops/action-gh-release@v2
+      with:
+        files: standalone.html
+        generate_release_notes: true

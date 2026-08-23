@@ -1,6 +1,7 @@
 node_modules
 dist
 *.zip
+.pnpm-store
 
 # Related to Node.js API and related demo scripts
 demo_output*
