@@ -37,6 +37,27 @@ const setFileFast = (zip, path, data) => {
   zip.files[path] = data;
 };
 
+/** 随机字节（用来做轻量 XOR 加密） */
+const randomBytes = (length) => {
+  const bytes = new Uint8Array(length);
+  if (typeof crypto !== 'undefined' && typeof crypto.getRandomValues === 'function') {
+    crypto.getRandomValues(bytes);
+  } else {
+    for (let i = 0; i < length; i++) bytes[i] = Math.floor(Math.random() * 256);
+  }
+  return bytes;
+};
+
+/** 字节数组 → base64（分块避免超长参数导致栈溢出） */
+const bytesToBase64 = (bytes) => {
+  const CHUNK_SIZE = 0x8000;
+  let binary = '';
+  for (let i = 0; i < bytes.length; i += CHUNK_SIZE) {
+    binary += String.fromCharCode.apply(null, bytes.subarray(i, i + CHUNK_SIZE));
+  }
+  return btoa(binary);
+};
+
 const SELF_LICENSE = {
   title: APP_NAME,
   homepage: WEBSITE,
@@ -180,6 +201,19 @@ class Packager extends EventTarget {
     this.options = Packager.DEFAULT_OPTIONS();
     this.aborted = false;
     this.used = false;
+    // 打包期预编译的状态（见 preparePrecompiled）
+    /** @type {string|null} 最后一条警告；非空表示预编译被跳过或降级了 */
+    this.precompileWarning = null;
+    /** @type {string[]} 全部警告 */
+    this.precompileWarnings = [];
+    /** @type {object|null} 预编译索引（内嵌进产物） */
+    this.precompiledIndex = null;
+    /** @type {string|null} 索引的 JSON 文本 */
+    this.precompiledIndexText = null;
+    /** @type {object|null} 统计信息 */
+    this.precompiledStats = null;
+    /** @type {Uint8Array|null} 剥离了积木逻辑的 sb3 */
+    this.precompiledProjectBuffer = null;
   }
 
   abort () {
@@ -1042,6 +1076,167 @@ cd "$(dirname "$0")"
     return `${this.options.app.windowTitle}.${extension}`;
   }
 
+  /** 预编译保护是否启用 */
+  get usesPrecompiled () {
+    return !!(this.options.precompileScripts || this.options.removeProjectData);
+  }
+
+  /** 产物里实际使用的工程数据：启用「移除项目数据」时是剥离了积木逻辑的那份 */
+  getProjectBuffer () {
+    return this.precompiledProjectBuffer || this.project.arrayBuffer;
+  }
+
+  /**
+   * 记一条预编译警告，并广播出去。
+   *
+   * 预编译失败是**静默降级**（产物照样能开，只是没保护），所以必须让 UI 能收到：
+   * 否则用户勾了「预编译脚本 / 移除项目数据」却拿到一个没保护的包，还以为自己protected了。
+   * 文案留在 packager 这一层（不做 i18n）：对 UI 来说这是技术诊断信息，
+   * 界面上另有一条 i18n 过的标题（options.precompileSkipped）。
+   */
+  reportPrecompileWarning (message) {
+    this.precompileWarning = message;
+    if (!this.precompileWarnings) this.precompileWarnings = [];
+    this.precompileWarnings.push(message);
+    this.dispatchEvent(new CustomEvent('precompile-warning', {detail: {message}}));
+  }
+
+  /**
+   * 打包期预编译。
+   *
+   * - precompileScripts: 只把编译结果内嵌进产物，运行时跳过编译（提速）
+   * - removeProjectData: 在此之上把积木逻辑从 project.json 里摘掉（保护）
+   *
+   * 任何一步失败都只记警告并退回原始产物 —— 宁可少一层保护，也不能产出打不开的包。
+   */
+  async preparePrecompiled () {
+    if (!this.usesPrecompiled) return;
+    this.ensureNotAborted();
+
+    if (this.project.type !== 'sb3') {
+      this.reportPrecompileWarning('工程不是 sb3 格式，跳过预编译保护');
+      return;
+    }
+
+    // 保护依赖编译缓存生效；用户若手动关掉编译器，这里必须纠正过来
+    if (!this.options.compiler.enabled) {
+      this.options.compiler.enabled = true;
+      this.reportPrecompileWarning('「移除项目数据 / 预编译脚本」需要启用编译器，已自动开启');
+    }
+
+    const dispatchProgress = (progress, stage) => this.dispatchEvent(new CustomEvent('precompile-progress', {
+      detail: {progress, stage}
+    }));
+    dispatchProgress(0, 'start');
+
+    let JSZip;
+    let buildPrecompiledProject;
+    try {
+      JSZip = await getJSZip();
+      const module = await import(/* webpackChunkName: "precompile" */ './protect/build');
+      buildPrecompiledProject = module.buildPrecompiledProject || (module.default && module.default.buildPrecompiledProject);
+      if (typeof buildPrecompiledProject !== 'function') {
+        throw new Error('无法加载预编译器');
+      }
+    } catch (error) {
+      this.reportPrecompileWarning(`预编译器加载失败：${(error && error.message) || error}`);
+      return;
+    }
+
+    try {
+      const zip = await JSZip.loadAsync(this.project.arrayBuffer);
+      const projectJSONFile = zip.file('project.json');
+      if (!projectJSONFile) {
+        this.reportPrecompileWarning('工程里找不到 project.json，跳过预编译保护');
+        return;
+      }
+      const projectJSON = JSON.parse(await projectJSONFile.async('string'));
+
+      const built = await buildPrecompiledProject({
+        projectBuffer: this.project.arrayBuffer,
+        projectJSON,
+        JSZip,
+        stripBlocks: !!this.options.removeProjectData,
+        compilerOptions: {
+          warpTimer: !!this.options.compiler.warpTimer
+        },
+        extensionURLs: projectJSON.extensionURLs || {},
+        extraExtensions: this.options.extensions,
+        onProgress: dispatchProgress
+      });
+
+      if (!built.ok) {
+        // ok=false 有两种来源：构建期加载工程失败（例如工程引用了拿不到 URL 的扩展），
+        // 或者预编译产物没通过还原自检。build.js 的 warnings 里已经写清了具体原因，
+        // 这里只补一句「已退回原始产物」，不再笼统地说是自检失败。
+        this.reportPrecompileWarning(`预编译已跳过，退回原始产物：${built.warnings.join('；')}`);
+        return;
+      }
+
+      this.precompiledIndex = built.index;
+      this.precompiledIndexText = built.indexText;
+      this.precompiledStats = built.stats;
+      // built.warnings 是「压缩退回 / 体积变化」这类提示，不是失败；
+      // 但也要让 UI 与 Node API 看得到，所以合并进统一列表（不重复广播失败事件）
+      for (const warning of built.warnings || []) {
+        if (!this.precompileWarnings) this.precompileWarnings = [];
+        this.precompileWarnings.push(warning);
+      }
+      if (built.strippedBuffer) {
+        this.precompiledProjectBuffer = built.strippedBuffer;
+      }
+      this.ensureNotAborted();
+      dispatchProgress(1, 'done');
+    } catch (error) {
+      this.reportPrecompileWarning(`预编译失败，已退回原始产物：${(error && error.message) || error}`);
+    }
+  }
+
+  /**
+   * 把预编译索引内嵌到产物里。
+   *
+   * 索引里装的就是「编译后的 JS」，所以它本身也要保护：
+   * 开启「加密项目数据」时会用同一套随机 XOR 密钥处理，避免被人直接读走逻辑。
+   */
+  generatePrecompiledScriptTag () {
+    if (!this.precompiledIndexText) return '';
+
+    const bytes = new TextEncoder().encode(this.precompiledIndexText);
+    if (!this.options.encryptProjectData) {
+      return `<script>window.__BILUP_PRECOMPILED__=${JSON.stringify(bytesToBase64(bytes))};</script>`;
+    }
+
+    const key = randomBytes(32);
+    const scrambled = new Uint8Array(bytes.length);
+    for (let i = 0; i < bytes.length; i++) scrambled[i] = bytes[i] ^ key[i % 32];
+    return `<script>window.__BILUP_PRECOMPILED__=${JSON.stringify(bytesToBase64(scrambled))};window.__BILUP_PRECOMPILED_KEY__=${JSON.stringify(bytesToBase64(key))};</script>`;
+  }
+
+  /**
+   * 运行时还原索引并装载的代码片段（放在 loadProject 之后）。
+   */
+  generatePrecompiledInstallCode () {
+    if (!this.precompiledIndexText) return '';
+    return `
+      // 预编译脚本装载：先补齐扩展，再把编译缓存塞进 VM
+      const precompiledRaw = window.__BILUP_PRECOMPILED__;
+      if (precompiledRaw) {
+        const precompiledBinary = atob(precompiledRaw);
+        const precompiledBytes = new Uint8Array(precompiledBinary.length);
+        for (let i = 0; i < precompiledBinary.length; i++) precompiledBytes[i] = precompiledBinary.charCodeAt(i);
+        const precompiledKeyRaw = window.__BILUP_PRECOMPILED_KEY__;
+        if (precompiledKeyRaw) {
+          const precompiledKeyBinary = atob(precompiledKeyRaw);
+          for (let i = 0; i < precompiledBytes.length; i++) {
+            precompiledBytes[i] ^= precompiledKeyBinary.charCodeAt(i % precompiledKeyBinary.length);
+          }
+        }
+        await scaffolding.applyPrecompiled(JSON.parse(new TextDecoder().decode(precompiledBytes)));
+        window.__BILUP_PRECOMPILED__ = null;
+        window.__BILUP_PRECOMPILED_KEY__ = null;
+      }`;
+  }
+
   generateObfuscatedScriptTag () {
     // Generate a script tag that loads the obfuscated (base64-encoded) script
     // and reconstructs it at runtime via eval(atob())
@@ -1069,32 +1264,15 @@ eval(_$_s);
       storageProgressStart = PROGRESS_FETCHED_COMPRESSED;
       storageProgressEnd = PROGRESS_EXTRACTED_COMPRESSED;
 
-      let projectData = new Uint8Array(this.project.arrayBuffer);
-
-      // Remove scripts from project data to prevent unpacking
-      if (this.options.removeProjectData && this.project.type === 'sb3') {
-        try {
-          const JSZip = await getJSZip();
-          const zip = await JSZip.loadAsync(projectData);
-          const projectJSONFile = zip.file('project.json');
-          if (projectJSONFile) {
-            const projectJSON = JSON.parse(await projectJSONFile.async('string'));
-            for (const target of projectJSON.targets) {
-              delete target.blocks;
-            }
-            const compressed = await (await getJSZip()).loadAsync(projectData);
-            compressed.file('project.json', JSON.stringify(projectJSON));
-            const modifiedBuffer = await compressed.generateAsync({
-              type: 'uint8array',
-              compression: 'DEFLATE'
-            });
-            projectData = new Uint8Array(modifiedBuffer);
-          }
-        } catch (e) {
-          // If stripping fails, continue with original data
-          console.warn('Failed to remove project data:', e);
-        }
-      }
+      // 「移除项目数据」现在由打包期预编译负责（见 preparePrecompiled）：
+      // 它把积木编译成 JS、注入产物，再把积木本体从 project.json 里摘掉。
+      // 旧实现直接 delete target.blocks 会让 sb3 校验失败、产物根本打不开。
+      //
+      // ⚠️ 这里必须拷贝一份：下面「加密项目数据」会就地 XOR 这个缓冲区，
+      //    而 getProjectBuffer() 可能直接返回工程原始的 ArrayBuffer，
+      //    此时 `new Uint8Array(ab)` 只是个视图，就地改写会污染 this.project.arrayBuffer ——
+      //    同一份工程接着打第二个包（html → exe）就会拿到被 XOR 过的坏数据。
+      let projectData = new Uint8Array(this.getProjectBuffer()).slice();
 
       // keep this up-to-date with base85.js
       // Encrypt project data if option is enabled
@@ -1330,6 +1508,8 @@ eval(_$_s);
     this.ensureNotAborted();
     await this.loadResources();
     this.ensureNotAborted();
+    await this.preparePrecompiled();
+    this.ensureNotAborted();
     const html = encodeBigString`<!DOCTYPE html>
 <!-- Created with ${WEBSITE} -->
 <html>
@@ -1525,6 +1705,7 @@ eval(_$_s);
   </div>
 
   ${this.options.target === 'html' && this.options.obfuscateJS ? this.generateObfuscatedScriptTag() : (this.options.target === 'html' ? `<script>${this.script}</script>` : '<script src="script.js"></script>')}
+  ${this.generatePrecompiledScriptTag()}
   <script>${removeUnnecessaryEmptyLines(`
     const appElement = document.getElementById('app');
     const launchScreen = document.getElementById('launch');
@@ -1756,6 +1937,7 @@ eval(_$_s);
     const run = async () => {
       const projectData = await getProjectData();
       await scaffolding.loadProject(projectData);
+      ${this.generatePrecompiledInstallCode()}
       setProgress(1);
       loadingScreen.hidden = true;
       if (${this.options.autoplay}) {
@@ -1779,14 +1961,14 @@ eval(_$_s);
     if (this.options.target !== 'html') {
       let zip;
       if (this.project.type === 'sb3' && this.options.target !== 'zip-one-asset') {
-        zip = await (await getJSZip()).loadAsync(this.project.arrayBuffer);
+        zip = await (await getJSZip()).loadAsync(this.getProjectBuffer());
         for (const file of Object.keys(zip.files)) {
           zip.files[`assets/${file}`] = zip.files[file];
           delete zip.files[file];
         }
       } else {
         zip = new (await getJSZip());
-        zip.file('project.zip', this.project.arrayBuffer);
+        zip.file('project.zip', this.getProjectBuffer());
       }
       zip.file('index.html', html);
       if (this.options.obfuscateJS && this.obfuscatedScript) {
@@ -1920,6 +2102,7 @@ Packager.DEFAULT_OPTIONS = () => ({
     warpTimer: false
   },
   removeProjectData: false,
+  precompileScripts: false,
   antiTamper: false,
   obfuscateJS: false,
   encryptProjectData: false,

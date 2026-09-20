@@ -10,6 +10,7 @@ import {ListMonitor, VariableMonitor} from './monitor';
 import ControlBar from './control-bar';
 import {isValidListValue, isValidVariableValue} from './verify-value';
 import defaultMessages from './messages.json';
+import {applyPrecompiled as applyPrecompiledScripts, verifyRuntimeRefs} from './precompiled';
 import styles from './style.css';
 
 const getEventXY = (e) => {
@@ -459,6 +460,39 @@ class Scaffolding extends EventTarget {
           this._connectPeripherals();
         }
       });
+  }
+
+  /**
+   * 装载打包期内嵌进来的预编译脚本。
+   *
+   * 必须在 loadProject 之后调用：脚本缓存是按「角色名 + 顶层积木 id」定位的，
+   * 而顶层积木 id 来自产物里的骨架积木。函数内部会先补齐扩展再装缓存。
+   *
+   * @param {object|string} index 预编译索引
+   * @returns {Promise<{ok: boolean, extensions: object, install: object}>}
+   */
+  applyPrecompiled (index) {
+    return applyPrecompiledScripts(this.vm, index).then((result) => {
+      if (!result.ok) {
+        console.error('装载预编译脚本失败', result);
+        if (result.extensions && result.extensions.failed.length > 0) {
+          console.error('扩展加载失败：', result.extensions.failed);
+        }
+        if (result.install && result.install.failed.length > 0) {
+          console.error('脚本装载失败：', result.install.failed);
+        }
+      }
+      return result;
+    });
+  }
+
+  /**
+   * 自检：索引里源码引用到的 opcode 是否都能在当前 VM 上解析到函数。
+   * @param {object|string} index
+   * @returns {{ok: boolean, missing: Array}}
+   */
+  verifyPrecompiled (index) {
+    return verifyRuntimeRefs(this.vm, index);
   }
 
   setUsername (username) {

@@ -568,7 +568,16 @@
       "string": "Remove project data from output (requires compiler)"
     },
     "removeProjectDataWarning": {
-      "string": "Warning: Removing project data prevents extracting the original Scratch project. Only works when the compiler is enabled."
+      "string": "Warning: Removing project data prevents extracting the original Scratch project. Requires the compiler and only works for .sb3 projects."
+    },
+    "precompileScripts": {
+      "string": "Precompile scripts at build time (blocks become protected JS; no compiling at runtime)"
+    },
+    "precompileSkipped": {
+      "string": "Warning: precompilation was skipped, so this package is NOT protected. See details below."
+    },
+    "precompileSkippedDetails": {
+      "string": "Why?"
     },
     "antiTamper": {
       "string": "Enable anti-tamper measures (disable right-click, F12, DevTools)"

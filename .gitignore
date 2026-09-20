@@ -8,5 +8,8 @@ demo_output*
 .packager-cache
 packaged-project
 
+# 临时调试脚本与实验产物（约定：临时东西都放这里，用完即弃）
+temp/
+
 # macOS
 .DS_Store

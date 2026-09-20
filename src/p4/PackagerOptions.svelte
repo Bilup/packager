@@ -11,7 +11,7 @@
   import Downloads from './Downloads.svelte';
   import writablePersistentStore from './persistent-store';
   import fileStore from './file-store';
-  import {progress, currentTask, error} from './stores';
+  import {progress, currentTask, error, precompileWarnings} from './stores';
   import Preview from './preview';
   import deepClone from './deep-clone';
   import Packager from '../packager/web/export';
@@ -139,6 +139,8 @@
     packager.options = options;
     packager.project = projectData.project;
 
+    precompileWarnings.reset();
+
     task.addEventListener('abort', () => {
       packager.abort();
     });
@@ -148,6 +150,10 @@
     packager.addEventListener('fetch-extensions', ({detail}) => {
       task.setProgressText($_('progress.downloadingExtensions'));
       task.setProgress(detail.progress);
+    });
+    // 预编译失败是静默降级，必须让用户看见（否则他以为拿到了受保护的产物）
+    packager.addEventListener('precompile-warning', ({detail}) => {
+      precompileWarnings.update((list) => [...list, {message: detail.message}]);
     });
     packager.addEventListener('large-asset-fetch', ({detail}) => {
       let thing;
@@ -728,6 +734,7 @@
       'projectId',
       'maxTextureDimension',
       'removeProjectData',
+      'precompileScripts',
       'antiTamper',
       'obfuscateJS',
       'encryptProjectData',
@@ -801,6 +808,24 @@
         }} />
         {$_('options.maxTextureDimension')}
       </label>
+
+      <div class="option">
+        <label>
+          <input type="checkbox" bind:checked={$options.precompileScripts}>
+          {$_('options.precompileScripts')}
+        </label>
+        {#if $precompileWarnings.length > 0}
+          <p class="warning">
+            {$_('options.precompileSkipped')}
+            <details>
+              <summary>{$_('options.precompileSkippedDetails')}</summary>
+              {#each $precompileWarnings as item}
+                <div>{item.message}</div>
+              {/each}
+            </details>
+          </p>
+        {/if}
+      </div>
 
       <div class="option">
         <label>

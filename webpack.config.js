@@ -139,6 +139,43 @@ const commonFrontendPlugins = () => [
   })
 ];
 
+/**
+ * scratch-vm 等 scratch-* 包的 src 用了 webpack 4 的解析器不认识的语法（`??` 等），
+ * 凡是会把它们打进产物的构建都需要这组 loader。
+ *
+ * 音频素材这里只做「占位」：这些构建里 scratch-vm 只用来编译积木，
+ * 不会真的播放声音，所以不需要把几十 MB 的 mp3 打进产物
+ * （scaffolding-min 也是同样的处理方式）。
+ */
+const scratchSourceLoaders = () => [
+  {
+    test: /\.jsx?$/,
+    loader: 'babel-loader',
+    include: [
+      /node_modules[\\/]scratch-[^\\/]+[\\/]src/
+    ],
+    options: {
+      babelrc: false,
+      presets: ['@babel/preset-env']
+    }
+  },
+  {
+    test: /\.mjs$/,
+    loader: 'babel-loader',
+    include: [
+      path.resolve(__dirname, 'node_modules')
+    ],
+    options: {
+      babelrc: false,
+      presets: ['@babel/preset-env']
+    }
+  },
+  {
+    test: /\.mp3$/i,
+    loader: path.resolve(__dirname, 'src', 'build', 'noop-loader.js')
+  }
+];
+
 const makeWebsite = () => ({
   ...base,
   devtool: isStandalone ? '' : 'source-map',
@@ -164,6 +201,7 @@ const makeWebsite = () => ({
   },
   module: {
     rules: [
+      ...scratchSourceLoaders(),
       {
         test: /\.png|\.svg$/i,
         use: isStandalone ? {
@@ -239,6 +277,7 @@ const makeNode = () => ({
   },
   module: {
     rules: [
+      ...scratchSourceLoaders(),
       {
         test: /\.png|\.svg$/i,
         use: 'file-loader'
@@ -247,6 +286,11 @@ const makeNode = () => ({
   },
   plugins: [
     ...commonFrontendPlugins(),
+    // 预编译器是按需动态 import 的（避免把 scratch-vm 塞进浏览器主包）。
+    // Node 版是发布出去的单文件 UMD 包，不能带 chunk，所以这里把动态 import 就地内联。
+    new webpack.optimize.LimitChunkCountPlugin({
+      maxChunks: 1
+    }),
     ...(process.env.BUNDLE_ANALYZER === 'node' ? [new BundleAnalyzerPlugin()] : [])
   ],
 });

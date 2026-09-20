@@ -16,6 +16,17 @@ progress.reset = () => {
 };
 
 export const currentTask = writable(null);
+
+/**
+ * 打包期预编译的警告。
+ *
+ * 预编译失败是静默降级（产物照样能开，只是没保护），必须让用户看见，
+ * 否则他勾了「预编译脚本 / 移除项目数据」却拿到一个没保护的包。
+ * 元素形如 {message: string}：message 是技术诊断信息，界面另给一条 i18n 标题。
+ */
+export const precompileWarnings = writable([]);
+precompileWarnings.reset = () => precompileWarnings.set([]);
+
 currentTask.replace = (newTask) => {
   currentTask.update((old) => {
     if (old) {
