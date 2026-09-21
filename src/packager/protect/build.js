@@ -53,16 +53,8 @@ const openExtensionSecurity = (vm) => {
   }
 };
 
-/**
- * 用一个「无渲染器、无存储」的 VM 加载工程 —— 编译只需要积木和扩展，不需要素材。
- *
- * ⚠️ 顺序很关键：必须先放开安全策略、再装扩展，最后才 loadProject。
- *    `vm.loadProject()` 内部会在反序列化时就调用 `_loadExtensions()` 处理工程引用的扩展
- *    （virtual-machine.js `_loadExtensions`），插件不在 VM 里、又不在 `extensionURLs`
- *    和 tw-default-extension-urls 里，就会直接抛 `Unknown extension: <id>` ——
- *    也就是说 loadProject 之后再补装载根本来不及。
- */
-const createBuildVm = async (projectBuffer, compilerOptions, extraExtensions, warnings) => {
+/** 造一个「无渲染器、无存储」的构建 VM（编译只需要积木和扩展，不需要素材） */
+const makeBuildVm = (compilerOptions) => {
   // 只有走到这个模块（异步 chunk）时才会把 scratch-vm 拉进来
   const VM = require('scratch-vm');
   const vm = new VM();
@@ -70,10 +62,44 @@ const createBuildVm = async (projectBuffer, compilerOptions, extraExtensions, wa
     enabled: true,
     warpTimer: !!(compilerOptions && compilerOptions.warpTimer)
   });
+  return vm;
+};
+
+/**
+ * 加载工程，并尽量让工程引用的扩展就位。
+ *
+ * ⚠️ 顺序很关键：必须先放开安全策略、再装扩展，最后才 loadProject。
+ *    `vm.loadProject()` 内部会在反序列化时就调用 `_loadExtensions()` 处理工程引用的扩展
+ *    （virtual-machine.js `_loadExtensions`），插件不在 VM 里、又不在 `extensionURLs`
+ *    和 tw-default-extension-urls 里，就会直接抛 `Unknown extension: <id>` ——
+ *    也就是说 loadProject 之后再补装载根本来不及。
+ *
+ * ⚠️ 放开限制后扩展是**真的会去加载**的，而加载可能失败：例如在没有 DOM 的环境里
+ *    加载非沙箱扩展会炸在 `appendChild`，失败会让 `Promise.all` 连累 `loadProject` 一起 reject。
+ *    所以做两级降级：
+ *      一级：放开限制（最理想 —— 扩展都能用，引用它们的脚本都能编译）
+ *      二级：用默认策略（拒绝加载工程内嵌扩展）。这样反序列化不会再因扩展而失败，
+ *            代价只是引用那些扩展的脚本编译不了、退回「保留积木」，其余脚本照常预编译。
+ *            总比整份放弃预编译强。
+ */
+const createBuildVm = async (projectBuffer, compilerOptions, extraExtensions, warnings) => {
+  const vm = makeBuildVm(compilerOptions);
   openExtensionSecurity(vm);
   await loadExtraExtensions(vm, extraExtensions, warnings);
-  await vm.loadProject(projectBuffer);
-  return vm;
+  try {
+    await vm.loadProject(projectBuffer);
+    return vm;
+  } catch (error) {
+    const message = (error && error.message) || `${error}`;
+    // 工程引用了拿不到 URL 的扩展：二级降级也救不了（还是会抛同样的错），如实抛给上层
+    if (/^Unknown extension:/.test(message)) throw error;
+    warnings.push(`放开扩展限制后加载工程失败（${message}），改为不加载工程内嵌扩展重试`);
+  }
+
+  const fallbackVm = makeBuildVm(compilerOptions);
+  await loadExtraExtensions(fallbackVm, extraExtensions, warnings);
+  await fallbackVm.loadProject(projectBuffer);
+  return fallbackVm;
 };
 
 /**
@@ -182,21 +208,37 @@ const buildPrecompiledProject = async (params) => {
   }
 
   report(PROGRESS.verify, 'strip');
-  const stripReport = stripProjectBlocks(projectJSON, index);
+  // extractSkeleton: 连帽子骨架也不留在 project.json 里，搬进索引由运行时重建。
+  // 这样解包工具连「作品用了哪些积木」都看不到（残留 opcode 从 6 种降到 0 种）。
+  const stripReport = stripProjectBlocks(projectJSON, index, {extractSkeleton: true});
+  if (stripReport.skeleton && stripReport.skeleton.size > 0) {
+    // 骨架挂在对应目标的 t[i].k 上，运行时按角色名找回
+    const byName = new Map();
+    for (const entry of index.t || []) byName.set(entry.n, entry);
+    for (const [name, blocks] of stripReport.skeleton) {
+      const entry = byName.get(name);
+      if (entry) entry.k = blocks;
+    }
+  }
   result.stats = {...stats, ...stripReport.stats};
 
+  const strippedJson = JSON.stringify(projectJSON);
   const zip = await JSZip.loadAsync(projectBuffer);
-  zip.file('project.json', JSON.stringify(projectJSON));
+  zip.file('project.json', strippedJson);
   result.strippedBuffer = await zip.generateAsync({
     type: 'uint8array',
     compression: 'DEFLATE'
   });
+
+  // 索引是在剥离之后才带上 k，所以这里要重新生成文本
+  result.indexText = toIndexText(index);
 
   const strippedBytes = result.strippedBuffer.length;
   const originalBytes = projectBuffer.byteLength || projectBuffer.length;
   warnings.push(`原始工程数据 ${(originalBytes / 1024).toFixed(0)} KB → 剥离逻辑后 ${(strippedBytes / 1024).toFixed(0)} KB`);
   result.stats.strippedBytes = strippedBytes;
   result.stats.originalBytes = originalBytes;
+  result.stats.projectJsonBytes = strippedJson.length;
 
   report(1, 'done');
   return result;

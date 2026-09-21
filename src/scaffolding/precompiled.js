@@ -21,6 +21,7 @@ const {
   parseIndex,
   parseExtensions,
   parseAddonCodes,
+  parseSkeletons,
   collectRuntimeRefs,
   extensionIdFromCompilerPackageName
 } = require('../protect/index-format');
@@ -32,6 +33,14 @@ const getScopedEval = () => {
     cachedScopedEval = require('scratch-vm/src/compiler/jsexecute').scopedEval;
   }
   return cachedScopedEval;
+};
+
+let cachedSb3 = null;
+const getSb3 = () => {
+  if (!cachedSb3) {
+    cachedSb3 = require('scratch-vm/src/serialization/sb3');
+  }
+  return cachedSb3;
 };
 
 const toIndexObject = (index) => (typeof index === 'string' ? JSON.parse(index) : index);
@@ -96,6 +105,62 @@ const ensurePrecompiledExtensions = async (vm, index) => {
 };
 
 /**
+ * 把索引里携带的「脚本骨架」重建进各目标的 blocks 容器。
+ *
+ * 提取模式下 project.json 里一个积木都没有，而运行时需要：
+ *   - 顶层积木存在，`blocks.getScripts()` 才找得到脚本、`startHats` 才能按字段匹配启动；
+ *   - 顶层积木的 id 存在，编译缓存才能按 id 命中打包期塞进来的函数。
+ * 所以这里把它们回填进去。
+ *
+ * ⚠️ 必须**先全部重建、再开始灌缓存**：
+ *    `Blocks.createBlocks()` 内部会 `resetCache()`，它会把已经灌好的 compiledScripts 一起清掉。
+ *    调用方（installPrecompiledScripts）已经按这个顺序分了两阶段。
+ *
+ * ⚠️ 必须过一遍 `sb3.deserializeBlocks()`：
+ *    索引里存的是 project.json 的**原始**形态（fields/inputs 都是数组、积木对象没有 id），
+ *    而 VM 内部的 blocks 必须是**已解码**形态 —— `getFields()`/`getInputs()` 都是原样返回，
+ *    解码这一步只在反序列化 sb3 时做。省掉它会在运行时炸得很难懂，例如
+ *    `Cannot read properties of undefined (reading 'toUpperCase')`
+ *    （RuntimeScriptCache 拿 `field.value` 去 toUpperCase，而 fields 还是数组）。
+ *
+ * @param {object} vm
+ * @param {object|string} index
+ * @returns {{targets: number, blocks: number, missing: string[]}}
+ */
+const rebuildSkeletonBlocks = (vm, index) => {
+  const parsedIndex = toIndexObject(index);
+  const skeletons = parseSkeletons(parsedIndex);
+  const report = {targets: 0, blocks: 0, missing: []};
+  if (skeletons.length === 0) return report;
+
+  const sb3 = getSb3();
+  const runtime = vm.runtime;
+  const byName = new Map();
+  for (const target of runtime.targets) byName.set(target.getName(), target);
+
+  for (const skeleton of skeletons) {
+    const target = byName.get(skeleton.name);
+    if (!target || !target.blocks) {
+      report.missing.push(skeleton.name);
+      continue;
+    }
+    // 深拷贝再解码：deserializeBlocks 是就地改的，而索引对象可能被复用（多次装载 / 克隆）
+    const decoded = JSON.parse(JSON.stringify(skeleton.blocks));
+    sb3.deserializeBlocks(decoded);
+    const blockList = Object.values(decoded);
+    report.blocks += blockList.length;
+    report.targets += 1;
+    if (typeof target.blocks.createBlocks === 'function') {
+      target.blocks.createBlocks(blockList);
+    } else {
+      for (const block of blockList) target.blocks.createBlock(block);
+    }
+  }
+
+  return report;
+};
+
+/**
  * 把索引里的编译结果装进 VM 的编译缓存。
  *
  * 前置条件：索引声明的扩展已经加载好（见 ensurePrecompiledExtensions）。
@@ -105,7 +170,7 @@ const ensurePrecompiledExtensions = async (vm, index) => {
  * @param {object} [options]
  * @param {Function} [options.scopedEval] 注入求值实现（测试用）
  * @param {boolean} [options.requireExtensions=true] 扩展没加载好时是否拒绝装载（默认拒绝，早失败好过晚崩）
- * @returns {{installed: number, targets: number, missing: Array, failed: Array, compilerForced: boolean, extensions: string[]}}
+ * @returns {{installed: number, targets: number, missing: Array, failed: Array, compilerForced: boolean, extensions: string[], skeleton: object}}
  */
 const installPrecompiledScripts = (vm, index, options = {}) => {
   const scopedEval = options.scopedEval || getScopedEval();
@@ -120,7 +185,8 @@ const installPrecompiledScripts = (vm, index, options = {}) => {
     missing: [],
     failed: [],
     compilerForced: false,
-    extensions: []
+    extensions: [],
+    skeleton: null
   };
 
   for (const {id} of parseExtensions(parsedIndex)) report.extensions.push(id);
@@ -149,6 +215,10 @@ const installPrecompiledScripts = (vm, index, options = {}) => {
     report.compilerForced = true;
   }
 
+  // 阶段一：重建骨架积木。必须全部做完再进阶段二 —— createBlocks 会 resetCache()
+  report.skeleton = rebuildSkeletonBlocks(vm, parsedIndex);
+
+  // 阶段二：灌编译缓存
   for (const target of runtime.targets) {
     const entry = parsed.get(target.getName());
     if (!entry) continue;
@@ -207,13 +277,14 @@ const applyPrecompiled = async (vm, index, options = {}) => {
 };
 
 /**
- * 自检：索引里所有源码引用到的 opcode / 扩展对象，在当前 VM 上都应该就位。
+ * 自检：索引里声明的东西在当前 VM 上是不是都就位了。
  * 在真正开跑之前调用，可以把「产物打不开」变成一条明确的错误信息。
  *
- * 两类都要查：
- *   - `runtime.getOpcodeFunction(opcode)` 必须能拿到函数
- *   - `runtime.ext_<name>` 指向的扩展必须是已加载（核心扩展除外），
- *     否则求值时就炸在 `Cannot read properties of undefined`
+ * 检查三件事：
+ *   1. `index.x` 里声明的扩展必须都已加载（**这是权威来源** —— 源码做过字符串表混淆之后，
+ *      `getOpcodeFunction("…")` 里的字面量会变成查表，没法再靠正则从源码里回捞）
+ *   2. 源码里出现过的 `getOpcodeFunction(opcode)` 必须能拿到函数
+ *   3. 源码里出现过的 `runtime.ext_<name>` 指向的扩展必须是已加载（核心扩展除外）
  *
  * @param {object} vm
  * @param {object|string} index
@@ -233,6 +304,19 @@ const verifyRuntimeRefs = (vm, index) => {
   const runtime = vm.runtime;
   const manager = vm.extensionManager || (runtime && runtime.extensionManager);
   const missing = [];
+
+  const isLoaded = (id) =>
+    !!(manager && typeof manager.isExtensionLoaded === 'function' && manager.isExtensionLoaded(id));
+  const isCore = (id) =>
+    !!(manager && typeof manager.isCoreExtension === 'function' && manager.isCoreExtension(id));
+
+  // 1) 索引声明的扩展（权威）
+  for (const {id} of parseExtensions(parsedIndex)) {
+    if (isCore(id) || isLoaded(id)) continue;
+    missing.push({opcode: 'index.x', extension: id});
+  }
+
+  // 2) 源码里的 opcode 引用（混淆后可能捞不到，捞到就顺手验一下）
   for (const opcode of opcodes) {
     const fn = runtime && typeof runtime.getOpcodeFunction === 'function'
       ? runtime.getOpcodeFunction(opcode)
@@ -241,17 +325,20 @@ const verifyRuntimeRefs = (vm, index) => {
       missing.push({opcode, extension: opcode.split('_')[0]});
     }
   }
+
+  // 3) 源码里直呼的扩展对象
   for (const name of extensionNames) {
     const id = extensionIdFromCompilerPackageName(name);
-    if (manager && typeof manager.isCoreExtension === 'function' && manager.isCoreExtension(id)) continue;
-    const loaded = manager && typeof manager.isExtensionLoaded === 'function' && manager.isExtensionLoaded(id);
-    if (!loaded) missing.push({opcode: `ext_${name}`, extension: id});
+    if (isCore(id) || isLoaded(id)) continue;
+    missing.push({opcode: `ext_${name}`, extension: id});
   }
+
   return {ok: missing.length === 0, missing};
 };
 
 module.exports = {
   ensurePrecompiledExtensions,
+  rebuildSkeletonBlocks,
   installPrecompiledScripts,
   applyPrecompiled,
   verifyRuntimeRefs

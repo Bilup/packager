@@ -22,8 +22,11 @@
  * 那条路径放在 build-order.test.js 里用替身 VM 验证调用顺序。
  */
 import JSZip from '@turbowarp/jszip';
+import VM from 'scratch-vm';
 
 import {buildPrecompiledProject} from '../../src/packager/protect/build';
+import {applyPrecompiled} from '../../src/scaffolding/precompiled';
+import {scrambleStrings} from '../../src/packager/protect/minify-script';
 
 const CUSTOM_EXTENSION_ID = 'protecttest';
 
@@ -295,7 +298,7 @@ describe('buildPrecompiledProject', () => {
     expect(text).toContain('未提供');
   });
 
-  test('stripBlocks=true 时产出剥离后的 sb3，积木逻辑被摘掉但帽子留着', async () => {
+  test('stripBlocks=true 时产出剥离后的 sb3：project.json 里一个积木都不剩', async () => {
     const {buffer, projectJSON} = await makeProject();
 
     const built = await build({
@@ -312,18 +315,73 @@ describe('buildPrecompiledProject', () => {
     const stripped = JSON.parse(await zip.file('project.json').async('string'));
     const sprite = stripped.targets.find((target) => target.name === 'Sprite1');
 
-    // 逻辑积木被摘掉了
-    expect(sprite.blocks.set).toBeUndefined();
-    expect(sprite.blocks.change).toBeUndefined();
-    // 帽子积木留着（startHats / 编译缓存查表都要靠它），但 next 断开了
-    expect(sprite.blocks.hat).toBeTruthy();
-    expect(sprite.blocks.hat.next).toBeNull();
-    expect(sprite.blocks.plain).toBeTruthy();
-    expect(sprite.blocks.plain.next).toBeNull();
+    // 提取模式：连帽子骨架都搬进索引了，project.json 里不该有任何积木
+    // —— 这样解包工具连「作品用了哪些积木」都看不到
+    expect(Object.keys(sprite.blocks)).toEqual([]);
+    expect(built.stats.extractedBlocks).toBeGreaterThan(0);
+    expect(built.stats.skeletonTargets).toBe(1);
+
+    // 骨架在索引里（挂了对应目标的 k 上），且带上了顶层积木
+    const entry = built.index.t.find((item) => item.n === 'Sprite1');
+    expect(entry).toBeTruthy();
+    expect(entry.k).toBeTruthy();
+    const skeletonOpcodes = Object.values(entry.k).map((block) => block.opcode);
+    expect(skeletonOpcodes).toContain('event_whenflagclicked');
+    // 逻辑积木不该混进骨架
+    expect(skeletonOpcodes).not.toContain('data_setvariableto');
+    expect(skeletonOpcodes).not.toContain('data_changevariableby');
+    // 骨架里每个脚本的顶层积木都在索引的脚本表里（运行时靠它查编译缓存）
+    for (const topBlockId of Object.keys(entry.s)) {
+      expect(entry.k[topBlockId]).toBeTruthy();
+    }
 
     // 其它字段没被动坏
     expect(stripped.extensions).toEqual(projectJSON.extensions);
     expect(sprite.variables).toEqual(projectJSON.targets[1].variables);
+  });
+
+  test('骨架被搬到索引后，运行时仍能把脚本启动起来（编译缓存命中）', async () => {
+    // 这是提取模式最关键的一环：project.json 里没有积木了，
+    // 运行时必须先按索引把骨架重建回 blocks 容器，编译缓存才查得到。
+    // 踩过的两个坑都在这里兜住：
+    //   1) 骨架要过一遍 sb3.deserializeBlocks()（fields/inputs 解码 + 补 id）
+    //   2) 重建必须早于灌缓存（createBlocks() 会 resetCache()）
+    const {buffer, projectJSON, scriptCount} = await makeProject({withExtension: true});
+
+    const built = await build({projectBuffer: buffer, projectJSON, stripBlocks: true});
+    expect(built.ok).toBe(true);
+
+    const vm = new VM();
+    vm.setCompilerOptions({enabled: true, warpTimer: false});
+    await vm.loadProject(built.strippedBuffer);
+
+    const sprite = vm.runtime.targets.find((target) => target.getName() === 'Sprite1');
+    // 加载完时骨架还没重建，所以一个脚本都看不到
+    expect(sprite.blocks.getScripts().length).toBe(0);
+
+    const applied = await applyPrecompiled(vm, built.index);
+    expect(applied.ok).toBe(true);
+    expect(applied.install.installed).toBe(scriptCount);
+    expect(applied.install.missing).toEqual([]);
+    expect(applied.install.skeleton.blocks).toBeGreaterThan(0);
+
+    // 骨架回来了：顶层积木可查、能启动
+    expect(sprite.blocks.getScripts().length).toBe(scriptCount);
+    for (const topBlockId of Object.keys(built.index.t[0].s)) {
+      expect(sprite.blocks.getBlock(topBlockId)).toBeTruthy();
+      // 编译缓存命中 —— 运行时不用再编译
+      expect(sprite.blocks.getCachedCompileResult(topBlockId)).toBeTruthy();
+    }
+
+    // 帽子积木的字段必须已解码成 {value,id}（否则 RuntimeScriptCache 会在 toUpperCase 上崩）
+    const flagHat = sprite.blocks.getScripts()
+      .map((id) => sprite.blocks.getBlock(id))
+      .find((block) => block.opcode === 'event_whenflagclicked');
+    expect(flagHat).toBeTruthy();
+    expect(flagHat.fields).toEqual({});
+
+    // startHats 可以正常走一遍（这一路上会用到 fields/inputs 的解码结果）
+    expect(() => vm.runtime.startHats('event_whenflagclicked')).not.toThrow();
   });
 
   test('stripBlocks=false 时不产出剥离结果', async () => {
@@ -362,5 +420,48 @@ describe('buildPrecompiledProject', () => {
     // 未知扩展直接让 loadProject 失败 → 整体放弃，不打半残的包
     expect(built.ok).toBe(false);
     expect(built.warnings.join('')).toContain(CUSTOM_EXTENSION_ID);
+  });
+});
+
+describe('scrambleStrings', () => {
+  test('把字符串字面量抽成表，逻辑体里不再出现原文', () => {
+    const source = '(function(t){const e=t.target,n=e.runtime;' +
+      'return n.getTargetForStage().variables["W`0wtcC4n.BPo,3(SVWL"],' +
+      'function*(){n.ext_looks._say("开始游戏",e)}})';
+
+    const scrambled = scrambleStrings(source);
+
+    expect(typeof scrambled).toBe('string');
+    // 逻辑体里不该再有可读的文案 / 变量 id
+    expect(scrambled).not.toContain('开始游戏');
+    expect(scrambled).not.toContain('W`0wtcC4n');
+    // 代码里只留查表
+    expect(scrambled).toContain('__s[');
+    // 表是反序存的（顺手 grep 产物也搜不到文案）
+    expect(scrambled).not.toContain('"开始游戏"');
+  });
+
+  test('变换后仍然求值出一个函数，且取到的字符串是对的', () => {
+    const source = '(function(t){const n=t.runtime;' +
+      'n.ext_looks._say("开始游戏");return function*(){n.ext_looks._say("得分");}})';
+
+    const scrambled = scrambleStrings(source);
+    const factory = new Function('return ' + scrambled)();
+    expect(typeof factory).toBe('function');
+
+    const said = [];
+    const runtime = {ext_looks: {_say: (text) => said.push(text)}};
+    // 工厂体在求值阶段就会调用一次 _say（非 gen 部分），generator 里那次要手动跑
+    const iterator = factory({runtime})();
+    iterator.next();
+    expect(said).toEqual(['开始游戏', '得分']);
+  });
+
+  test('没有字符串字面量时返回 null（不做无意义的包装）', () => {
+    expect(scrambleStrings('(function(t){return t.x+1})')).toBeNull();
+  });
+
+  test('空字符串不进表（省体积，也避免无意义替换）', () => {
+    expect(scrambleStrings('(function(){return ""})')).toBeNull();
   });
 });

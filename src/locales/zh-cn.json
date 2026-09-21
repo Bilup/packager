@@ -88,6 +88,7 @@
         "removeProjectDataWarning": "警告：移除项目数据后，打包文件将无法提取出原始 Scratch 作品。需要启用编译器，且仅对 .sb3 工程有效。",
         "precompileScripts": "打包时就编译好脚本（积木变成受保护的 JS，运行时不再编译）",
         "precompileSkipped": "警告：预编译被跳过，这个包没有受到保护。原因见下方。",
+        "precompilePartial": "提示：部分脚本没能预编译，仍保留了积木，保护不完整。详见下方。",
         "precompileSkippedDetails": "为什么？",
         "antiTamper": "启用防篡改保护（禁用右键菜单、F12、开发者工具）",
         "obfuscateJS": "混淆 JavaScript 代码（Base64 编码 + 运行时 eval 解码）",

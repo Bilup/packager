@@ -151,9 +151,9 @@
       task.setProgressText($_('progress.downloadingExtensions'));
       task.setProgress(detail.progress);
     });
-    // 预编译失败是静默降级，必须让用户看见（否则他以为拿到了受保护的产物）
+    // 预编译失败/降级是静默的，必须让用户看见（否则他以为拿到了受保护的产物）
     packager.addEventListener('precompile-warning', ({detail}) => {
-      precompileWarnings.update((list) => [...list, {message: detail.message}]);
+      precompileWarnings.update((list) => [...list, {message: detail.message, kind: detail.kind || 'skipped'}]);
     });
     packager.addEventListener('large-asset-fetch', ({detail}) => {
       let thing;
@@ -815,8 +815,9 @@
           {$_('options.precompileScripts')}
         </label>
         {#if $precompileWarnings.length > 0}
+          {@const skipped = $precompileWarnings.some((item) => item.kind === 'skipped')}
           <p class="warning">
-            {$_('options.precompileSkipped')}
+            {skipped ? $_('options.precompileSkipped') : $_('options.precompilePartial')}
             <details>
               <summary>{$_('options.precompileSkippedDetails')}</summary>
               {#each $precompileWarnings as item}

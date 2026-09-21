@@ -576,6 +576,9 @@
     "precompileSkipped": {
       "string": "Warning: precompilation was skipped, so this package is NOT protected. See details below."
     },
+    "precompilePartial": {
+      "string": "Note: some scripts could not be precompiled and still keep their blocks, so protection is incomplete. See details below."
+    },
     "precompileSkippedDetails": {
       "string": "Why?"
     },

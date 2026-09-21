@@ -1090,15 +1090,21 @@ cd "$(dirname "$0")"
    * 记一条预编译警告，并广播出去。
    *
    * 预编译失败是**静默降级**（产物照样能开，只是没保护），所以必须让 UI 能收到：
-   * 否则用户勾了「预编译脚本 / 移除项目数据」却拿到一个没保护的包，还以为自己protected了。
+   * 否则用户勾了「预编译脚本 / 移除项目数据」却拿到一个没保护的包，还以为自己 protected 了。
+   *
+   * kind 用来区分严重程度，UI 要靠它决定是"这个包没受保护"还是"只是有提示"：
+   *   - 'skipped'：预编译整体没生效，产物**没有**保护
+   *   - 'partial'：生效了，但有部分脚本编译不了、保留着积木（保护不完整）
+   *   - 'info'   ：纯提示（体积变化之类），不影响保护
+   *
    * 文案留在 packager 这一层（不做 i18n）：对 UI 来说这是技术诊断信息，
-   * 界面上另有一条 i18n 过的标题（options.precompileSkipped）。
+   * 界面上另有一条 i18n 过的标题。
    */
-  reportPrecompileWarning (message) {
+  reportPrecompileWarning (message, kind = 'skipped') {
     this.precompileWarning = message;
     if (!this.precompileWarnings) this.precompileWarnings = [];
     this.precompileWarnings.push(message);
-    this.dispatchEvent(new CustomEvent('precompile-warning', {detail: {message}}));
+    this.dispatchEvent(new CustomEvent('precompile-warning', {detail: {message, kind}}));
   }
 
   /**
@@ -1176,11 +1182,18 @@ cd "$(dirname "$0")"
       this.precompiledIndex = built.index;
       this.precompiledIndexText = built.indexText;
       this.precompiledStats = built.stats;
-      // built.warnings 是「压缩退回 / 体积变化」这类提示，不是失败；
-      // 但也要让 UI 与 Node API 看得到，所以合并进统一列表（不重复广播失败事件）
+      // built.warnings 是「有脚本编译不了 / 体积变化」这类提示，不影响这次预编译本身是否成立。
+      // 按严重程度分开报给 UI：
+      //   partial —— 有脚本没编译上、保留着积木（保护不完整）。用 stats 判定（权威），
+      //              拿不到 stats 时退化用文案里的关键词猜。
+      //   info    —— 纯提示（体积变化之类）。
+      const partialByStats = !stats ? false : (stats.failed > 0 || stats.keptScripts > 0);
       for (const warning of built.warnings || []) {
-        if (!this.precompileWarnings) this.precompileWarnings = [];
+        const kind = partialByStats || /编译|退回|找不到 terser|无法|改为不加载/.test(warning)
+          ? 'partial'
+          : 'info';
         this.precompileWarnings.push(warning);
+        this.dispatchEvent(new CustomEvent('precompile-warning', {detail: {message: warning, kind}}));
       }
       if (built.strippedBuffer) {
         this.precompiledProjectBuffer = built.strippedBuffer;

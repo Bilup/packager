@@ -90,8 +90,113 @@ const createScriptMinifier = (options = {}) => (source) => {
   return code;
 };
 
+/** 字符串表在生成码里用的变量名（没什么含义，也不是关键字） */
+const TABLE_NAME = '__s';
+
+/** 把一个子节点在父节点上就地换掉（terser 这个打包版没带 TreeTransformer，只能自己来） */
+const replaceChild = (parent, child, replacement) => {
+  for (const key of Object.keys(parent)) {
+    const value = parent[key];
+    if (value === child) {
+      try {
+        parent[key] = replacement;
+        return true;
+      } catch (e) {
+        return false;
+      }
+    }
+    if (Array.isArray(value)) {
+      const index = value.indexOf(child);
+      if (index !== -1) {
+        value[index] = replacement;
+        return true;
+      }
+    }
+  }
+  return false;
+};
+
+/**
+ * 把源码里的字符串字面量抽成一张表，代码里只留查表。
+ *
+ * 为什么值得做：编译产物里那些字面量恰恰是最有信息量的东西 ——
+ * 变量 id（`N.variables["W\`0wtcC4n…"]`）、广播名、按键名、造型名、`说` 的文案。
+ * 抽表之后逻辑体里只剩 `__s[1]`，一眼看不出在干什么。
+ *
+ * 表本身再做一层「反序存储 + 运行时翻回来」，这样在产物文件里
+ * grep 作品文案/角色名也搜不到 —— 挡掉最常见的那种顺手一搜。
+ *
+ * ⚠️ `insertRuntime()` 是按「源码里有没有出现某个 helper 名」来决定注入哪些运行时函数的，
+ *    所以前奏里用到的方法名（split/reverse/join/map）不能和 helper 撞名
+ *    —— 实测这 36 个 helper 里没有这几个，是安全的。
+ *
+ * ⚠️ 变换后必须在调用方重新求值自检（scopedEval 出来还是不是函数），
+ *    压坏了就退回压缩版源码。这里只负责变换，不负责验证。
+ *
+ * @param {string} minifiedSource 已经压缩过的源码（必须是「求值为函数」的表达式）
+ * @returns {string|null} 变换后的源码；没有可抽的字符串时返回 null
+ */
+const scrambleStrings = (minifiedSource) => {
+  const terser = getTerser();
+  let ast;
+  try {
+    ast = terser.parse(minifiedSource);
+  } catch (e) {
+    return null;
+  }
+
+  const pairs = [];
+  const strings = [];
+  const seen = new Map();
+  const walker = new terser.TreeWalker(function (node) {
+    if (!(node instanceof terser.AST_String)) return;
+    if (node.value === '') return;
+    const parent = walker.parent();
+    if (!parent) return;
+    let index = seen.get(node.value);
+    if (index === undefined) {
+      index = strings.length;
+      strings.push(node.value);
+      seen.set(node.value, index);
+    }
+    pairs.push({node, parent, index});
+  });
+  ast.walk(walker);
+
+  if (pairs.length === 0) return null;
+
+  // 走完再改，避免边遍历边改结构
+  let replaced = 0;
+  for (const {node, parent, index} of pairs) {
+    const replacement = new terser.AST_Sub({
+      expression: new terser.AST_SymbolRef({name: TABLE_NAME}),
+      property: new terser.AST_Number({value: index})
+    });
+    if (replaceChild(parent, node, replacement)) replaced += 1;
+  }
+  if (replaced === 0) return null;
+
+  // 代码已经压缩过了，这一遍只做代码生成，不再跑 compress/mangle
+  const printed = terser.minify(ast, {
+    ecma: 2018,
+    compress: false,
+    mangle: false,
+    output: {comments: false}
+  });
+  if (!printed || printed.error || typeof printed.code !== 'string') return null;
+  // minify(ast) 会按「语句」加结尾分号，而我们要的是一个表达式
+  const body = printed.code.replace(/;+\s*$/, '');
+  if (!body) return null;
+
+  const reversed = strings.map((value) => value.split('').reverse().join(''));
+  // 整体仍是一个表达式：IIFE 求值出原来的工厂函数
+  return `(()=>{const ${TABLE_NAME}=${JSON.stringify(reversed)}` +
+    `.map(s=>s.split("").reverse().join(""));return (${body});})()`;
+};
+
 module.exports = {
   DEFAULT_OPTIONS,
   createScriptMinifier,
+  scrambleStrings,
   isMinifierAvailable
 };

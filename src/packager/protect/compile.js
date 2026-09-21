@@ -20,6 +20,9 @@ const {
   extensionIdFromCompilerPackageName
 } = require('../../protect/index-format');
 
+// 只引用函数，模块本身不加载 terser（terser 是在 createScriptMinifier 里懒加载的）
+const {scrambleStrings} = require('./minify-script');
+
 /** 懒加载 scratch-vm 的内部模块：只有真正用预编译时才需要它们。 */
 const loadCompiler = () => {
   const {IRGenerator} = require('scratch-vm/src/compiler/irgen');
@@ -170,22 +173,42 @@ const compileOne = (script, ir, target, deps, context) => {
 };
 
 /**
- * 压缩并自检。任何一步出问题都退回原源码 —— 保护可以打折，产物不能打不开。
- * @returns {string|null} 压缩后的源码；失败返回 null（调用方用原源码）
+ * 压缩 → 字符串表混淆 → 自检。任何一步出问题都退回上一个能用的版本
+ * —— 保护可以打折，产物不能打不开。
+ *
+ * 两级都是「先做、再求值自检、坏了就退」：
+ *   1. terser 压缩（体积）
+ *   2. 字符串表（可读性）—— 失败就退回压缩版，压缩版也失败就退回原源码
+ *
+ * @returns {string|null} 可直接内嵌进索引的源码；全失败时返回 null（调用方用原源码）
  */
 const minifyWithFallback = (source, jsexecute, context) => {
-  const {minifier, minifyStats} = context;
-  try {
+  const {minifier, minifyStats, scramble = true} = context;  try {
     const minified = minifier(source);
     if (typeof minified !== 'string' || minified.length === 0) return null;
     // 压缩后必须仍然求值出函数，否则说明优化动坏了语义
     if (typeof jsexecute.scopedEval(minified) !== 'function') return null;
+
+    let finalSource = minified;
+    if (scramble) {
+      try {
+        const scrambled = scrambleStrings(minified);
+        // 字符串表变换同样要自检：坏掉就保留压缩版，不要连压缩一起丢掉
+        if (typeof scrambled === 'string' && scrambled.length > 0 &&
+            typeof jsexecute.scopedEval(scrambled) === 'function') {
+          finalSource = scrambled;
+        }
+      } catch (e) {
+        // 混淆失败不影响正确性，静默用压缩版
+      }
+    }
+
     if (minifyStats) {
       minifyStats.originalBytes += source.length;
-      minifyStats.minifiedBytes += minified.length;
+      minifyStats.minifiedBytes += finalSource.length;
       minifyStats.count += 1;
     }
-    return minified;
+    return finalSource;
   } catch (error) {
     if (minifyStats) {
       minifyStats.failed += 1;
@@ -247,7 +270,8 @@ const compileProject = (vm, options = {}) => {
     extensionURLs,
     requireAllExtensionsResolved = true,
     minifier = null,
-    minify = false
+    minify = false,
+    scramble = true
   } = options;
 
   // 没显式给 minifier 但要求压缩，就现造一个（terser 不可用时会抛，调用方自行兜底）
@@ -258,7 +282,10 @@ const compileProject = (vm, options = {}) => {
   const minifyStats = activeMinifier
     ? {count: 0, failed: 0, originalBytes: 0, minifiedBytes: 0, firstError: null}
     : null;
-  const context = activeMinifier ? {minifier: activeMinifier, minifyStats} : null;
+  // scramble: 在压缩之外再做一层「字符串抽表」，让生成码里的文案/变量 id 不再可读
+  const context = activeMinifier
+    ? {minifier: activeMinifier, minifyStats, scramble}
+    : null;
 
   const targets = [];
   const failures = [];

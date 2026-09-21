@@ -70,16 +70,27 @@ const collectKeepSet = (blocks, rootId, wholeTree) => {
  *   3. 对 `procedures_definition` 而言，留住它的 `procedures_prototype`（mutation 里带着
  *      proccode 与参数表），解释器兜底与 TW 的 spork/frames 才不会失去过程元信息。
  *
+ * `extractSkeleton: true`（更彻底的保护）：
+ *   连这些骨架也不留在 project.json 里，而是**搬进索引**，由运行时在装载阶段重建。
+ *   好处：产物里 `target.blocks` 是空对象，解包工具连「作品用到了哪些积木」都看不到
+ *   （实测可把残留 opcode 从 6 种降到 0 种）。代价是运行时多一步重建（见 precompiled.js）。
+ *
  * @param {object} projectJSON 已解析的 project.json（会被直接修改并返回）
  * @param {object} index compileProject() 产出的索引
- * @returns {{projectJSON: object, stats: object}}
+ * @param {object} [options]
+ * @param {boolean} [options.extractSkeleton=false] 是否把骨架搬进索引、project.json 里不留积木
+ * @returns {{projectJSON: object, skeleton: Map<string, object>|null, stats: object}}
  */
-const stripProjectBlocks = (projectJSON, index) => {
+const stripProjectBlocks = (projectJSON, index, options = {}) => {
+  const {extractSkeleton = false} = options;
   const parsed = parseIndexKeys(index);
   let strippedScripts = 0;
   let keptScripts = 0;
+  let extractedBlocks = 0;
   /** 至少有一个脚本被整棵保留（= 保留逻辑）的目标名 */
   const keptTargets = [];
+  /** 主题名 -> {积木id: 积木对象}（仅 extractSkeleton 模式） */
+  const skeleton = extractSkeleton ? new Map() : null;
 
   for (const target of projectJSON.targets || []) {
     const blocks = target.blocks;
@@ -129,11 +140,29 @@ const stripProjectBlocks = (projectJSON, index) => {
         }
       }
     }
+
+    if (extractSkeleton) {
+      // 把剩下的骨架整份搬到索引里，然后让 project.json 一个积木都不剩
+      const kept = {};
+      for (const blockId of keep) {
+        if (blocks[blockId]) kept[blockId] = blocks[blockId];
+      }
+      if (Object.keys(kept).length > 0) skeleton.set(target.name, kept);
+      extractedBlocks += Object.keys(kept).length;
+      for (const blockId of Object.keys(blocks)) delete blocks[blockId];
+    }
   }
 
   return {
     projectJSON,
-    stats: {strippedScripts, keptScripts, keptTargets}
+    skeleton,
+    stats: {
+      strippedScripts,
+      keptScripts,
+      keptTargets,
+      extractedBlocks,
+      skeletonTargets: skeleton ? skeleton.size : 0
+    }
   };
 };
 

@@ -7,8 +7,11 @@
  *
  * 紧凑字段命名是为了减小产物体积（这份索引会原样内嵌到输出的 HTML/zip 里）：
  *   {
- *     v: 1,
- *     t: [ { n: 角色名, st: 0|1, s: { 顶层积木id: { e: 入口源码, p: { 变体: 源码 }, h: 是否可执行帽子 } } } ],
+ *     v: 2,
+ *     t: [ { n: 角色名, st: 0|1,
+ *            s: { 顶层积木id: { e: 入口源码, p: { 变体: 源码 }, h: 是否可执行帽子 } },
+ *            k: { 积木id: 积木对象 }   // 「脚本骨架」：提取模式下才有，见 parseSkeletons
+ *          } ],
  *     x: { 扩展id: 扩展URL或"" },   // 编译源码里用到的扩展
  *     a: [ addon积木代号 ]          // 编译源码里用到的 addon 积木（由宿主 App 注册，本包无法自行加载）
  *   }
@@ -71,6 +74,24 @@ const parseExtensions = (index) => {
 const parseAddonCodes = (index) => {
   const codes = (index && index.a) || [];
   return Array.isArray(codes) ? codes.slice() : [];
+};
+
+/**
+ * 索引里携带的「脚本骨架」（提取模式下才有）。
+ *
+ * 提取模式下 project.json 里一个积木都不留，启动脚本所需的顶层积木（帽子）与它们引用的
+ * shadow 全部存在这里，由运行时在装载阶段重建进 `target.blocks`
+ * （必须早于灌编译缓存 —— `Blocks.createBlocks()` 内部会 resetCache()）。
+ *
+ * @returns {Array<{name: string, isStage: boolean, blocks: object}>}
+ */
+const parseSkeletons = (index) => {
+  const result = [];
+  for (const target of (index && index.t) || []) {
+    if (!target.k) continue;
+    result.push({name: target.n, isStage: !!target.st, blocks: target.k});
+  }
+  return result;
 };
 
 const serializeIndex = (index) => JSON.stringify(index);
@@ -177,6 +198,7 @@ module.exports = {
   parseIndexKeys,
   parseExtensions,
   parseAddonCodes,
+  parseSkeletons,
   collectRuntimeRefs,
   extensionIdFromCompilerPackageName,
   collectIndexSources,
