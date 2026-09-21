@@ -87,6 +87,17 @@ const stripProjectBlocks = (projectJSON, index, options = {}) => {
   let strippedScripts = 0;
   let keptScripts = 0;
   let extractedBlocks = 0;
+  /**
+   * 索引声称「已编译」、但 project.json 里根本没有的顶层积木数。
+   *
+   * 不是 0 是正常的：scratch-vm 在反序列化时会**合成**一些 project.json 里不存在的积木，
+   * 例如角色专属监视器指向了一个已不存在的角色时，会补一个 `data_variable` 顶层积木
+   * （控制台会看到 `Tried to deserialize sprite specific monitor … could not find sprite …`）。
+   * 这类幽灵积木会被编译器当成一个脚本编出来，却没法进骨架 —— 运行时装不上，
+   * 会以 `missing` 的形式报出来。数量应当很小，但**不该是静默的**，所以这里计数、
+   * 由调用方决定要不要提示。
+   */
+  let scriptsMissingFromProject = 0;
   /** 至少有一个脚本被整棵保留（= 保留逻辑）的目标名 */
   const keptTargets = [];
   /** 主题名 -> {积木id: 积木对象}（仅 extractSkeleton 模式） */
@@ -103,6 +114,10 @@ const stripProjectBlocks = (projectJSON, index, options = {}) => {
         keptTargets.push(target.name);
       }
       continue;
+    }
+
+    for (const scriptId of compiledScripts) {
+      if (!Object.prototype.hasOwnProperty.call(blocks, scriptId)) scriptsMissingFromProject += 1;
     }
 
     const keep = new Set();
@@ -161,7 +176,8 @@ const stripProjectBlocks = (projectJSON, index, options = {}) => {
       keptScripts,
       keptTargets,
       extractedBlocks,
-      skeletonTargets: skeleton ? skeleton.size : 0
+      skeletonTargets: skeleton ? skeleton.size : 0,
+      scriptsMissingFromProject
     }
   };
 };

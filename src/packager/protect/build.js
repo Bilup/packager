@@ -236,6 +236,14 @@ const buildPrecompiledProject = async (params) => {
   const strippedBytes = result.strippedBuffer.length;
   const originalBytes = projectBuffer.byteLength || projectBuffer.length;
   warnings.push(`原始工程数据 ${(originalBytes / 1024).toFixed(0)} KB → 剥离逻辑后 ${(strippedBytes / 1024).toFixed(0)} KB`);
+  if (stripReport.stats.scriptsMissingFromProject > 0) {
+    // 这些是 VM 合成出来的幽灵积木（典型来源：指向已不存在角色的角色专属监视器），
+    // project.json 里没有它们，所以骨架里也装不下，运行时会被报成 missing。
+    warnings.push(
+      `${stripReport.stats.scriptsMissingFromProject} 个顶层积木只存在于 VM 里（project.json 里没有，` +
+      `多半是监视器合成的），无法进骨架，运行时会被跳过`
+    );
+  }
   result.stats.strippedBytes = strippedBytes;
   result.stats.originalBytes = originalBytes;
   result.stats.projectJsonBytes = strippedJson.length;

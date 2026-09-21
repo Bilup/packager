@@ -1104,7 +1104,13 @@ cd "$(dirname "$0")"
     this.precompileWarning = message;
     if (!this.precompileWarnings) this.precompileWarnings = [];
     this.precompileWarnings.push(message);
-    this.dispatchEvent(new CustomEvent('precompile-warning', {detail: {message, kind}}));
+    try {
+      this.dispatchEvent(new CustomEvent('precompile-warning', {detail: {message, kind}}));
+    } catch (error) {
+      // 监听器（UI）自己抛错不能反过来把打包搞崩 —— 尤其这里常常是在
+      // catch 分支里做失败上报，再抛一次就会让「静默降级」变成「打包直接失败」。
+      console.warn('precompile-warning listener threw', error);
+    }
   }
 
   /**
@@ -1179,28 +1185,42 @@ cd "$(dirname "$0")"
         return;
       }
 
+      // ⚠️ 这里的所有计算都必须在「提交状态」之前做完。
+      //    否则中途抛错（这里曾经把人家的 built.stats 误写成 stats，直接 ReferenceError）
+      //    就会留下「索引已赋值、剥离后的工程数据还没赋值」的自相矛盾产物：
+      //    产物里内嵌的是**原始**的 project.json，索引却是按**剥离后**的工程算出来的。
+      const builtStats = built.stats || {};
+      const partialByStats = builtStats.failed > 0 || builtStats.keptScripts > 0;
+      // built.warnings 是「有脚本编译不了 / 体积变化」这类提示，不影响这次预编译本身是否成立。
+      // 按严重程度分开报给 UI：
+      //   partial —— 有脚本没编译上、保留着积木（保护不完整）。优先用 stats 判定（权威），
+      //              拿不到 stats 时退化用文案里的关键词猜。
+      //   info    —— 纯提示（体积变化之类）。
+      const precompileNotices = (built.warnings || []).map((message) => ({
+        message,
+        kind: partialByStats || /编译|退回|找不到 terser|无法|改为不加载/.test(message) ? 'partial' : 'info'
+      }));
+
       this.precompiledIndex = built.index;
       this.precompiledIndexText = built.indexText;
       this.precompiledStats = built.stats;
-      // built.warnings 是「有脚本编译不了 / 体积变化」这类提示，不影响这次预编译本身是否成立。
-      // 按严重程度分开报给 UI：
-      //   partial —— 有脚本没编译上、保留着积木（保护不完整）。用 stats 判定（权威），
-      //              拿不到 stats 时退化用文案里的关键词猜。
-      //   info    —— 纯提示（体积变化之类）。
-      const partialByStats = !stats ? false : (stats.failed > 0 || stats.keptScripts > 0);
-      for (const warning of built.warnings || []) {
-        const kind = partialByStats || /编译|退回|找不到 terser|无法|改为不加载/.test(warning)
-          ? 'partial'
-          : 'info';
-        this.precompileWarnings.push(warning);
-        this.dispatchEvent(new CustomEvent('precompile-warning', {detail: {message: warning, kind}}));
-      }
       if (built.strippedBuffer) {
         this.precompiledProjectBuffer = built.strippedBuffer;
+      }
+      for (const notice of precompileNotices) {
+        this.precompileWarnings.push(notice.message);
+        this.dispatchEvent(new CustomEvent('precompile-warning', {detail: notice}));
       }
       this.ensureNotAborted();
       dispatchProgress(1, 'done');
     } catch (error) {
+      // 失败必须退成「什么都没有」：原地保留半套状态（比如索引有了、剥离数据没有）
+      // 会产出自相矛盾的产物 —— 内嵌的还是原始 project.json，索引却按剥离后的工程算，
+      // 运行时表现就是「产物打不开 / 玩不了」，而且很难查。
+      this.precompiledIndex = null;
+      this.precompiledIndexText = null;
+      this.precompiledStats = null;
+      this.precompiledProjectBuffer = null;
       this.reportPrecompileWarning(`预编译失败，已退回原始产物：${(error && error.message) || error}`);
     }
   }
