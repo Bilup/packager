@@ -591,6 +591,55 @@
     "encryptProjectData": {
       "string": "Encrypt project data with random XOR key"
     },
+    "obfuscationOptions": {
+      "string": "Obfuscated packaging",
+      "developer_comment": "Title of a section grouping all code-protection options into one protection level."
+    },
+    "obfuscationOptionsHelp": {
+      "string": "Make the code harder to read and the project harder to unpack. Higher levels protect more, but also ask more of the project — see the note under each level."
+    },
+    "protectionLevel": {
+      "string": "Protection level"
+    },
+    "protectionLevel_off": {
+      "string": "Off"
+    },
+    "protectionLevel_low": {
+      "string": "Low"
+    },
+    "protectionLevel_medium": {
+      "string": "Medium"
+    },
+    "protectionLevel_high": {
+      "string": "High"
+    },
+    "protectionLevel_custom": {
+      "string": "Custom"
+    },
+    "protectionLevelHint_off": {
+      "string": "Nothing is applied. Runtime scripts stay plain text and the blocks stay in project.json, so anyone can unpack the original project."
+    },
+    "protectionLevelHint_low": {
+      "string": "Runtime scripts are replaced with Base64 chunks that are decoded at runtime, so grepping the output finds no logic. The blocks still live in project.json, so an unpacker can still recover the project."
+    },
+    "protectionLevelHint_medium": {
+      "string": "On top of Low, scripts are compiled at build time (nothing is compiled at runtime, so startup is faster) and that compiled code is obfuscated too. Blocks are still kept, so an unpacker can still recover the project — limited protection, but the best compatibility."
+    },
+    "protectionLevelHint_high": {
+      "string": "On top of Medium, the block logic is removed from the output (an unpacker only gets the launch hats) and right-click / F12 / DevTools are disabled. Note: requires the compiler and only works for .sb3; if the project references an extension whose URL cannot be fetched, this whole layer is skipped and reported."
+    },
+    "protectionLevelHint_custom": {
+      "string": "Pick the individual details yourself."
+    },
+    "encryptionOptions": {
+      "string": "Encrypted packaging"
+    },
+    "encryptionOptionsHelp": {
+      "string": "Encrypts the project data embedded in the output. Separate from obfuscation above: obfuscation covers code, encryption covers data."
+    },
+    "encryptProjectDataHelp": {
+      "string": "Note: the output is a self-contained single file, so the decryption key necessarily travels in the same file as the ciphertext. It stops casual inspection, not a determined person — do not treat it as real secrecy."
+    },
     "stripElectron": {
       "string": "Strip unnecessary files from Electron (reduce EXE size)"
     },

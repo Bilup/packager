@@ -11,6 +11,13 @@
   import Downloads from './Downloads.svelte';
   import writablePersistentStore from './persistent-store';
   import fileStore from './file-store';
+  import {
+    PROTECTION_FLAGS,
+    PROTECTION_LEVEL_IDS,
+    CUSTOM_LEVEL,
+    detectProtectionLevel,
+    applyProtectionLevel
+  } from './protection-presets';
   import {progress, currentTask, error, precompileWarnings} from './stores';
   import Preview from './preview';
   import deepClone from './deep-clone';
@@ -105,12 +112,32 @@
     $options.projectId !== defaultOptions.projectId ||
     $options.packagedRuntime !== defaultOptions.packagedRuntime ||
     $options.maxTextureDimension !== defaultOptions.maxTextureDimension ||
-    $options.removeProjectData !== defaultOptions.removeProjectData ||
-    $options.antiTamper !== defaultOptions.antiTamper ||
-    $options.obfuscateJS !== defaultOptions.obfuscateJS ||
-    $options.encryptProjectData !== defaultOptions.encryptProjectData ||
     $options.stripElectron !== defaultOptions.stripElectron
   );
+
+  // 「混淆打包」的当前等级：从 4 个开关反推，不额外存字段（存两份必然会不同步）。
+  // 但「自定义」这一项反推不出来 —— 它本来就不改任何开关，如果只看反推结果，
+  // 用户一选「自定义」下拉框就会立刻弹回原来的等级、细节开关永远露不出来。
+  // 所以额外用 editingCustom 记住「用户正在手动挑细节」这个意图。
+  let editingCustom = false;
+  $: detectedLevel = detectProtectionLevel($options);
+  $: showCustomFlags = editingCustom || detectedLevel === CUSTOM_LEVEL;
+  $: protectLevel = showCustomFlags ? CUSTOM_LEVEL : detectedLevel;
+
+  const changeProtectionLevel = (event) => {
+    const id = event.target.value;
+    if (id === CUSTOM_LEVEL) {
+      // 只是把细节开关亮出来，不动任何选项（用户还没挑呢）
+      editingCustom = true;
+      return;
+    }
+    editingCustom = false;
+    applyProtectionLevel($options, id);
+    // ⚠️ 必须显式通知一次：applyProtectionLevel 是**就地**改对象，
+    //    没走 store 的 set 就不会触发订阅，下拉框和提示文字都不会跟着更新
+    //    （本文件里 resetOptions 也是这么收尾的）。
+    $options = $options;
+  };
 
   const automaticallyCenterCursor = () => {
     const icon = $customCursorIcon;
@@ -333,6 +360,18 @@
     color: black;
     padding: 10px;
     border-radius: 10px;
+  }
+  .section-help {
+    font-size: 0.9em;
+    opacity: 0.85;
+  }
+  select {
+    display: block;
+    margin: 4px 0;
+    min-width: 220px;
+  }
+  .protection-flags {
+    margin: 8px 0 8px 1em;
   }
   .buttons {
     display: flex;
@@ -733,11 +772,6 @@
       'custom',
       'projectId',
       'maxTextureDimension',
-      'removeProjectData',
-      'precompileScripts',
-      'antiTamper',
-      'obfuscateJS',
-      'encryptProjectData',
       'stripElectron'
     ]);
   }}
@@ -809,56 +843,6 @@
         {$_('options.maxTextureDimension')}
       </label>
 
-      <div class="option">
-        <label>
-          <input type="checkbox" bind:checked={$options.precompileScripts}>
-          {$_('options.precompileScripts')}
-        </label>
-        {#if $precompileWarnings.length > 0}
-          {@const skipped = $precompileWarnings.some((item) => item.kind === 'skipped')}
-          <p class="warning">
-            {skipped ? $_('options.precompileSkipped') : $_('options.precompilePartial')}
-            <details>
-              <summary>{$_('options.precompileSkippedDetails')}</summary>
-              {#each $precompileWarnings as item}
-                <div>{item.message}</div>
-              {/each}
-            </details>
-          </p>
-        {/if}
-      </div>
-
-      <div class="option">
-        <label>
-          <input type="checkbox" bind:checked={$options.removeProjectData}>
-          {$_('options.removeProjectData')}
-        </label>
-      </div>
-      {#if $options.removeProjectData}
-        <p class="warning">{$_('options.removeProjectDataWarning')}</p>
-      {/if}
-
-      <div class="option">
-        <label>
-          <input type="checkbox" bind:checked={$options.antiTamper}>
-          {$_('options.antiTamper')}
-        </label>
-      </div>
-
-      <div class="option">
-        <label>
-          <input type="checkbox" bind:checked={$options.obfuscateJS}>
-          {$_('options.obfuscateJS')}
-        </label>
-      </div>
-
-      <div class="option">
-        <label>
-          <input type="checkbox" bind:checked={$options.encryptProjectData}>
-          {$_('options.encryptProjectData')}
-        </label>
-      </div>
-
       {#if $options.target.includes('electron')}
         <div class="option">
           <label>
@@ -868,6 +852,79 @@
         </div>
       {/if}
     </details>
+  </div>
+</Section>
+
+<Section
+  accent="#FFAB19"
+  reset={() => {
+    resetOptions([
+      ...PROTECTION_FLAGS
+    ]);
+  }}
+>
+  <div>
+    <h2>{$_('options.obfuscationOptions')}</h2>
+    <p class="section-help">{$_('options.obfuscationOptionsHelp')}</p>
+
+    <label class="option">
+      {$_('options.protectionLevel')}
+      <select value={protectLevel} on:change={changeProtectionLevel}>
+        {#each PROTECTION_LEVEL_IDS as id}
+          <option value={id}>{$_(`options.protectionLevel_${id}`)}</option>
+        {/each}
+      </select>
+    </label>
+    <p class="section-help">{$_(`options.protectionLevelHint_${protectLevel}`)}</p>
+
+    {#if showCustomFlags}
+      <div class="protection-flags">
+        {#each PROTECTION_FLAGS as flag}
+          <label class="option">
+            <input type="checkbox" bind:checked={$options[flag]}>
+            {$_(`options.${flag}`)}
+          </label>
+        {/each}
+      </div>
+    {/if}
+
+    {#if $options.removeProjectData}
+      <p class="warning">{$_('options.removeProjectDataWarning')}</p>
+    {/if}
+
+    {#if $precompileWarnings.length > 0}
+      {@const skipped = $precompileWarnings.some((item) => item.kind === 'skipped')}
+      <p class="warning">
+        {skipped ? $_('options.precompileSkipped') : $_('options.precompilePartial')}
+        <details>
+          <summary>{$_('options.precompileSkippedDetails')}</summary>
+          {#each $precompileWarnings as item}
+            <div>{item.message}</div>
+          {/each}
+        </details>
+      </p>
+    {/if}
+  </div>
+</Section>
+
+<Section
+  accent="#9966FF"
+  reset={() => {
+    resetOptions([
+      'encryptProjectData'
+    ]);
+  }}
+>
+  <div>
+    <h2>{$_('options.encryptionOptions')}</h2>
+    <p class="section-help">{$_('options.encryptionOptionsHelp')}</p>
+    <label class="option">
+      <input type="checkbox" bind:checked={$options.encryptProjectData}>
+      {$_('options.encryptProjectData')}
+    </label>
+    {#if $options.encryptProjectData}
+      <p class="section-help">{$_('options.encryptProjectDataHelp')}</p>
+    {/if}
   </div>
 </Section>
 
