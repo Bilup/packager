@@ -1275,6 +1275,16 @@ cd "$(dirname "$0")"
     // and reconstructs it at runtime via eval(atob())
     const chunks = this.obfuscatedScript || [];
     const chunksJSON = JSON.stringify(chunks);
+    // ⚠️ 闭合标签必须是**真正的** `</script>`，而且要拼接出来，不能在模板字符串里写字面量。
+    //    两条都是必须的：
+    //      1. 写成 `<\\/script>` 时，模板字符串里的 `\\` 会输出一个**字面反斜杠**，
+    //         产物里就成了 `<\/script>` —— HTML 解析器不认这个闭合标签，脚本会一直
+    //         吞到后面第一个 `</script>` 为止（把下一个 `<script>` 也吃进来），
+    //         于是报 `Uncaught SyntaxError: Unexpected token '<'`，`eval` 从未执行，
+    //         接着就是 `Scaffolding is not defined`、整页打不开。
+    //      2. 本文件自身也会被内联进 HTML（standalone 构建，见 build/generate-standalone.js），
+    //         源码里出现字面量闭合标签会提前结束内联脚本，所以这里用拼接。
+    const closeTag = '<' + '/script>';
     return `<script>
 (function(){
 var _$_c=${chunksJSON};
@@ -1282,7 +1292,125 @@ var _$_s='';
 for(var _$_i=0;_$_i<_$_c.length;_$_i++){_$_s+=decodeURIComponent(escape(atob(_$_c[_$_i])))};
 eval(_$_s);
 })();
-<\\/script>`;
+${closeTag}`;
+  }
+
+  /**
+   * 产物结构自检：`<script>` 与 `</script>` 必须配平。
+   *
+   * 为什么值得单独拦一道：HTML 解析器是按「找第一个闭合标签」来吃 `<script>` 内容的。
+   * 一旦某个闭合标签被写坏（少个字符、或被转义成 `<\/script>`），
+   * 这个 `<script>` 就会一直吞到后面第一个真正的 `</script>`，把下一个 `<script>` 也吃进来，
+   * 产物表现为「整页打不开 + Uncaught SyntaxError: Unexpected token '<'」——
+   * 而打包过程本身一句报错都没有（曾经真的这样漏出去过一次，见 git 历史）。
+   * 这种失败太隐蔽、代价太大，所以这里直接抛：宁可打包失败，也不要产出打不开的包。
+   *
+   * ⚠️ 三个必须注意的实现细节：
+   *   1. 入参是 **Uint8Array** 不是字符串 —— `encodeBigString` 返回的就是字节
+   *      （它存在的理由就是 Chrome 处理不了超长字符串，见 encode-big-string.js）。
+   *      所以这里也在字节上扫，绝不整块 decode 成字符串，否则正好抵消它的设计意图。
+   *   2. 判据只能是**朴素计数**（`<script` 的个数 vs `</script` 的个数），
+   *      不能「按解析器规则配对」：配对法会拿坏标签后面的第一个真闭合标签去配对，
+   *      于是永远配得平，恰好把这个 bug 漏掉。朴素计数才抓得住两个方向：
+   *      闭标签写坏 → 开多闭少；内容里混进未转义的 `</script` → 闭多开少。
+   *   3. 但 `<script` 只统计**结构位置**上的（行首，可带缩进；或紧跟在前一个标签之后）。
+   *      原因：运行时脚本的 JS 里本来就有裸的 `<script` —— 例如
+   *        `.replace(/<script[\s\S]*>[\s\S]*<\/script>/,"<script><\/script>")`
+   *      它在脚本内容里完全无害，朴素子串计数会把它当开标签、进而误挡合法产物。
+   *      `</script` 则不做这个限制：它出现在内容里**一定是**会把元素提前截断的真错误。
+   *      本文件生成的真实标签都满足结构位置特征（模板与各处 push 都以换行 + 缩进开头）。
+   *
+   * @param {Uint8Array|string} output 产物 HTML（字符串入参会按 UTF-8 编码，方便测试）
+   */
+  assertBalancedScriptTags (output) {
+    const bytes = typeof output === 'string' ? new TextEncoder().encode(output) : output;
+    const bytesOf = (text) => Uint8Array.from(text, (char) => char.charCodeAt(0));
+    const OPEN = bytesOf('<script');
+    const CLOSE = bytesOf('</script');
+    // `<\/script>`：模板字符串里误写 `<\\/script>` 留下的产物
+    const ESCAPED = bytesOf('<' + String.fromCharCode(92) + '/script>');
+
+    // HTML 标签名大小写不敏感 —— 但只能对字母小写化：
+    // 早先写成 `b | 0x20` 会把 `\`（0x5c）也变成 `|`（0x7c），
+    // 于是 `<\/script>` 这条线索永远匹配不上。
+    const lowerByte = (b) => (b >= 0x41 && b <= 0x5a ? b | 0x20 : b);
+    const matchesAt = (needle, at) => {
+      if (at + needle.length > bytes.length) return false;
+      for (let i = 0; i < needle.length; i++) {
+        if (lowerByte(bytes[at + i]) !== needle[i]) return false;
+      }
+      return true;
+    };
+    const delimited = (at) => {
+      if (at >= bytes.length) return true;
+      const b = bytes[at];
+      return b === 0x20 || b === 0x09 || b === 0x0a || b === 0x0d || b === 0x2f || b === 0x3e;
+    };
+    /** 这个 `<script` 是否出现在 HTML 结构位置上（行首，或紧跟在前一个标签之后） */
+    const isStructuralPosition = (at) => {
+      for (let i = at - 1; i >= 0; i--) {
+        const b = bytes[i];
+        if (b === 0x20 || b === 0x09 || b === 0x0d) continue;
+        if (b === 0x0a) return true;
+        if (b === 0x3e) return true;
+        return false;
+      }
+      return true;
+    };
+    const findTag = (needle, from) => {
+      for (let i = from; i + needle.length <= bytes.length; i++) {
+        if (bytes[i] !== needle[0]) continue;
+        if (matchesAt(needle, i) && delimited(i + needle.length)) return i;
+      }
+      return -1;
+    };
+    /** 从 from 开始找下一个「结构位置上的」开标签 */
+    const findOpenTag = (from) => {
+      let at = findTag(OPEN, from);
+      while (at !== -1 && !isStructuralPosition(at)) at = findTag(OPEN, at + OPEN.length);
+      return at;
+    };
+    const countTags = (needle, structuralOnly) => {
+      let n = 0;
+      for (let i = findTag(needle, 0); i !== -1; i = findTag(needle, i + needle.length)) {
+        if (!structuralOnly || isStructuralPosition(i)) n += 1;
+      }
+      return n;
+    };
+
+    const opens = countTags(OPEN, true);
+    const closes = countTags(CLOSE, false);
+    if (opens === closes) return;
+
+    // —— 只是为了让报错更可定位：走一遍配对，找出第一个找不到闭合标签的开标签。
+    //    它通常就是「坏标签所在的位置」，但判定本身依赖上面的朴素计数。
+    let cursor = 0;
+    let unclosedAt = -1;
+    let paired = 0;
+    for (;;) {
+      const open = findOpenTag(cursor);
+      if (open === -1) break;
+      const close = findTag(CLOSE, open + OPEN.length);
+      if (close === -1) {
+        unclosedAt = open;
+        break;
+      }
+      paired += 1;
+      cursor = close + CLOSE.length;
+    }
+
+    const escapedAt = findTag(ESCAPED, 0);
+    const escapedHint = escapedAt === -1 ? '' : (
+      `\n线索：产物在字节偏移 ${escapedAt} 处出现了被转义的闭合标签「<${String.fromCharCode(92)}/script>」，` +
+      '浏览器不认它 —— 这通常就是元凶（生成它的模板字符串里多写了一个反斜杠）。'
+    );
+    const where = unclosedAt === -1
+      ? `只有 ${paired} 个开标签能配上闭合标签`
+      : `字节偏移 ${unclosedAt} 处的 <script> 之后再也找不到真正的 </script>，` +
+        '后面的内容会被一起吞进这个脚本块';
+    throw new Error(
+      `产物的 <script> 标签不配平（开 ${opens} / 闭 ${closes}）：${where}，页面会直接打不开。${escapedHint}`
+    );
   }
 
   async generateGetProjectData () {
@@ -1990,6 +2118,7 @@ eval(_$_s);
 </html>
 `;
     this.ensureNotAborted();
+    this.assertBalancedScriptTags(html);
 
     if (this.options.target !== 'html') {
       let zip;
