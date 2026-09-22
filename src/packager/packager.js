@@ -1254,6 +1254,10 @@ cd "$(dirname "$0")"
       // 预编译脚本装载：先补齐扩展，再把编译缓存塞进 VM
       const precompiledRaw = window.__BILUP_PRECOMPILED__;
       if (precompiledRaw) {
+        // 扩展加载是上面异步启动的，这里必须等它们落地 —— 否则会把「正在加载」
+        // 误判成「加载不了」，进而做出错误的降级判断
+        const extensionLoads = window.__BILUP_EXTENSION_LOADS__ || [];
+        const extensionResults = await Promise.all(extensionLoads);
         const precompiledBinary = atob(precompiledRaw);
         const precompiledBytes = new Uint8Array(precompiledBinary.length);
         for (let i = 0; i < precompiledBinary.length; i++) precompiledBytes[i] = precompiledBinary.charCodeAt(i);
@@ -1264,7 +1268,32 @@ cd "$(dirname "$0")"
             precompiledBytes[i] ^= precompiledKeyBinary.charCodeAt(i % precompiledKeyBinary.length);
           }
         }
-        await scaffolding.applyPrecompiled(JSON.parse(new TextDecoder().decode(precompiledBytes)));
+        const precompiledResult = await scaffolding.applyPrecompiled(
+          JSON.parse(new TextDecoder().decode(precompiledBytes)));
+        // 降级是「悄悄发生」的，所以必须留下面向用户与排障的痕迹：
+        // 挂到 window 上（测试探针要读），并在不完整时明确告警 —— 以前这一步是完全静默的，
+        // 连「扩展加载失败」都只是一条 unhandled rejection。
+        const failedExtensionLoads = extensionResults.filter((item) => item && item.ok === false);
+        window.__BILUP_PRECOMPILED_REPORT__ = {
+          ok: precompiledResult.ok,
+          summary: precompiledResult.summary,
+          extensionLoads: extensionResults,
+          extensionFailures: precompiledResult.extensions.failed,
+          installed: precompiledResult.install.installed,
+          skippedByExtension: precompiledResult.install.skippedByExtension
+        };
+        if (failedExtensionLoads.length > 0) {
+          // 注意：扩展没加载上不一定影响这份作品（可能有脚本根本不用它），
+          // 但如果索引里有脚本依赖它，上面 applyPrecompiled 会把它们列进 skippedByExtension。
+          console.warn('[bilup] 有扩展没能加载：',
+            failedExtensionLoads.map((item) => item.url + ' -> ' + item.error), window.__BILUP_PRECOMPILED_REPORT__);
+        }
+        if (!precompiledResult.ok) {
+          console.warn('[bilup] 预编译装载不完整：' + precompiledResult.summary, window.__BILUP_PRECOMPILED_REPORT__);
+          if (precompiledResult.install.installed === 0) {
+            console.error('[bilup] 一个脚本都没装上，作品不会响应绿旗。请检查上面的扩展加载失败原因。');
+          }
+        }
         window.__BILUP_PRECOMPILED__ = null;
         window.__BILUP_PRECOMPILED_KEY__ = null;
       }`;
@@ -2054,9 +2083,18 @@ ${closeTag}`;
         getSandboxMode: () => 'unsandboxed',
         canLoadExtensionFromProject: () => true
       });
-      for (const extension of ${JSON.stringify(await this.generateExtensionURLs())}) {
-        vm.extensionManager.loadExtensionURL(extension);
-      }
+      // 扩展在这里就开加载，跟下面的工程数据解码并行 —— 但**必须把句柄留下来**。
+      // 以前这里是对 loadExtensionURL 的裸调用（发射即忘），有两个后果：
+      //   1. 装预编译脚本时扩展可能还在路上，会被误判成「加载不了」，
+      //      而旧逻辑一失败就整体拒绝 → 作品能打开但按绿旗毫无反应；
+      //   2. 失败变成 unhandled rejection，控制台里看不出是哪条 URL 挂了。
+      // 所以下面把每个 URL 的结果都收敛成一个不会 reject 的对象，供装载阶段 await + 上报。
+      // （本行所在的是 encodeBigString 的模板字符串：注释里不能出现反引号，会提前闭合模板）
+      window.__BILUP_EXTENSION_LOADS__ = ${JSON.stringify(await this.generateExtensionURLs())}.map((url) =>
+        vm.extensionManager.loadExtensionURL(url).then(
+          () => ({url, ok: true}),
+          (error) => ({url, ok: false, error: '' + ((error && error.message) || error)})
+        ));
 
       ${this.options.closeWhenStopped ? `
       vm.runtime.on('PROJECT_RUN_STOP', () => {

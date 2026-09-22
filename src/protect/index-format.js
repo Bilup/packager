@@ -7,12 +7,14 @@
  *
  * 紧凑字段命名是为了减小产物体积（这份索引会原样内嵌到输出的 HTML/zip 里）：
  *   {
- *     v: 2,
+ *     v: 3,
  *     t: [ { n: 角色名, st: 0|1,
- *            s: { 顶层积木id: { e: 入口源码, p: { 变体: 源码 }, h: 是否可执行帽子 } },
- *            k: { 积木id: 积木对象 }   // 「脚本骨架」：提取模式下才有，见 parseSkeletons
+ *            s: { 顶层积木id: { e: 入口源码, p: { 变体: 源码 }, h: 是否可执行帽子,
+ *                              x: 这个脚本依赖的扩展在 t[].x 里的下标（base36 字符，可缺省） } },
+ *            k: { 积木id: 积木对象 },   // 「脚本骨架」：提取模式下才有，见 parseSkeletons
+ *            x: [ 本目标脚本用到的扩展 id ]   // 上面 s[].x 里的字符就是这里的下标
  *          } ],
- *     x: { 扩展id: 扩展URL或"" },   // 编译源码里用到的扩展
+ *     x: { 扩展id: 扩展URL或"" },   // 编译源码里用到的扩展（全量，v1/v2 时代就有）
  *     a: [ addon积木代号 ]          // 编译源码里用到的 addon 积木（由宿主 App 注册，本包无法自行加载）
  *   }
  *
@@ -22,16 +24,62 @@
  *   而编译产物里 `runtime.getOpcodeFunction("music_restForBeats")` 这类调用
  *   会在工厂函数求值时就把函数引用固化下来，所以扩展必须**在求值之前**就位。
  *
+ * 为什么还要「按脚本」记（v3 新增的 t[].x + s[].x）：
+ *   原来只知道「这个工程一共需要哪些扩展」，于是运行时只能做**全有或全无**的判断 ——
+ *   只要有一个扩展没加载上，就一条脚本都不装。而剥离模式下积木已经没了，
+ *   结果是**整个作品直接变成死的**：能打开、但按绿旗什么都不会发生。
+ *   有了按脚本的依赖，就可以只跳过真正用到那个扩展的脚本，其余照常装、照常跑，
+ *   并把跳过了哪些如实地报出来。
+ *
  * 本文件用 CommonJS 写，方便 Node 直接 require（打包器和脚手架两侧都会用到）。
  */
 
 const ENTRY_KEY = '';
-const FORMAT_VERSION = 2;
+const FORMAT_VERSION = 3;
 
-/** 把索引转成 Map：`角色名` -> Map：顶层积木 id -> {entry, procedures, executableHat} */
+/**
+ * 解一个目标里「按脚本记录的扩展依赖」。
+ *
+ * 存储形态：`target.x` 是扩展 id 数组，脚本上的 `packed.x` 是一串 base36 字符，
+ * 每个字符是数组下标。这样多个脚本共用的扩展 id 只存一份。
+ *
+ * @param {object} target 索引里的目标条目
+ * @param {object} packed 索引里的脚本条目
+ * @param {boolean} hasPerScriptInfo 整份索引是否具备「按脚本依赖」这份信息（v3+）
+ * @returns {string[]|null} 扩展 id 列表；`null` 表示**索引里没有这份信息**
+ *   （v1/v2 的旧索引），调用方应当退回「全局要求」的严格判断，而不是当成「无依赖」。
+ */
+const parseScriptExtensions = (target, packed, hasPerScriptInfo) => {
+  // 整份索引都没有这份信息 → 返回 null 表示「未知」
+  if (!hasPerScriptInfo) return null;
+  // 有这份信息、但这个脚本没标 x → 它不依赖任何扩展（**不是**未知，可以放心装）
+  if (!packed || typeof packed.x !== 'string') return [];
+  const ids = [];
+  const list = Array.isArray(target && target.x) ? target.x : [];
+  for (const char of packed.x) {
+    const id = list[parseInt(char, 36)];
+    if (typeof id === 'string') ids.push(id);
+  }
+  return ids;
+};
+
+/** 把一串扩展 id 编成 `packed.x` 的形态（打包期用） */
+const encodeScriptExtensions = (allIds, usedIds) => {
+  let out = '';
+  for (const id of usedIds) {
+    const index = allIds.indexOf(id);
+    if (index >= 0 && index < 36) out += index.toString(36);
+  }
+  return out;
+};
+
+/** 把索引转成 Map：`角色名` -> Map：顶层积木 id -> {entry, procedures, executableHat, extensions} */
 const parseIndex = (index) => {
   const byTarget = new Map();
   const targets = (index && index.t) || [];
+  // 「按脚本依赖」这份信息从 v3 起才有。任何一处出现 t[].x 也认，容忍版本号没跟上。
+  const hasPerScriptInfo = ((index && index.v) || 0) >= 3 ||
+    targets.some((target) => Array.isArray(target && target.x));
   for (const target of targets) {
     const scripts = new Map();
     for (const topBlockId of Object.keys(target.s || {})) {
@@ -39,7 +87,9 @@ const parseIndex = (index) => {
       scripts.set(topBlockId, {
         entry: packed.e,
         procedures: packed.p || {},
-        executableHat: !!packed.h
+        executableHat: !!packed.h,
+        // null = 索引没记录（旧索引），调用方按「未知」处理
+        extensions: parseScriptExtensions(target, packed, hasPerScriptInfo)
       });
     }
     byTarget.set(target.n, {isStage: !!target.st, scripts});
@@ -197,6 +247,8 @@ module.exports = {
   parseIndex,
   parseIndexKeys,
   parseExtensions,
+  parseScriptExtensions,
+  encodeScriptExtensions,
   parseAddonCodes,
   parseSkeletons,
   collectRuntimeRefs,

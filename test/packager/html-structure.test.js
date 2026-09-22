@@ -81,6 +81,32 @@ describe('generateObfuscatedScriptTag', () => {
   });
 });
 
+describe('预编译装载代码', () => {
+  test('会等待扩展加载句柄落地，并暴露装载报告（不再静默降级）', () => {
+    const packager = makePackager();
+    // generatePrecompiledInstallCode 只在有索引时才产出内容
+    packager.precompiledIndexText = '{"v":3,"t":[]}';
+
+    const code = packager.generatePrecompiledInstallCode();
+
+    // 1) 等 window.__BILUP_EXTENSION_LOADS__（产物里扩展是异步启动的，不等就会把
+    //    「正在加载」误判成「加载不了」，进而整体拒绝装载）
+    expect(code).toContain('__BILUP_EXTENSION_LOADS__');
+    expect(code).toMatch(/await Promise\.all\(/);
+    // 2) 报告必须挂到 window 上，并在不完整时告警 —— 以前这一步是完全静默的
+    expect(code).toContain('__BILUP_PRECOMPILED_REPORT__');
+    expect(code).toContain('console.warn');
+    expect(code).toContain('installed === 0');
+    // 3) 扩展加载失败也必须报出来（以前只是 unhandled rejection，看不出是哪条 URL）
+    expect(code).toContain('有扩展没能加载');
+  });
+
+  test('没有索引时不产出任何装载代码', () => {
+    const packager = makePackager();
+    expect(packager.generatePrecompiledInstallCode()).toBe('');
+  });
+});
+
 describe('assertBalancedScriptTags', () => {
   test('配平的 HTML 通过', () => {
     const packager = makePackager();

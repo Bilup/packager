@@ -152,7 +152,7 @@ test('依赖扩展的工程：先加载扩展再装缓存，行为一致', async
   expect(snapshot(protectedVm)).toEqual(snapshot(original));
 }, 60000);
 
-test('扩展没加载就装缓存会被拒绝（回归：曾经表现为运行中 blockFunction is not a function）', async () => {
+test('扩展没加载时按脚本降级：只跳过用到它的脚本，不再整体拒绝（回归：曾经一个扩展加载失败整个作品就是死的）', async () => {
   const buffer = readFixture(path.join('execute', 'tw-forkphorus-515-wait-zero-seconds-in-warp-mode.sb3'));
   const {index} = await buildIndex(buffer);
   const stripped = await stripArchive(buffer, index);
@@ -160,9 +160,135 @@ test('扩展没加载就装缓存会被拒绝（回归：曾经表现为运行�
   const vm = await newVm(stripped.buffer);
   const report = installPrecompiledScripts(vm, index);
 
+  // 这个工程的脚本都用了 music，所以会被跳过 —— 但这是「跳过」，不是「硬失败」
+  expect(report.unknownDependencies).toBe(false);
+  expect(report.skippedByExtension.length).toBeGreaterThan(0);
+  expect(report.skippedByExtension[0].extensions).toEqual(['music']);
+  expect(report.failed).toEqual([]);
+  expect(report.unavailableExtensions).toEqual(['music']);
+});
+
+test('部分降级：不依赖缺失扩展的脚本照常装进去', async () => {
+  const buffer = readFixture(path.join('execute', 'tw-forkphorus-515-wait-zero-seconds-in-warp-mode.sb3'));
+  const {index, stats} = await buildIndex(buffer);
+  const stripped = await stripArchive(buffer, index);
+
+  // 按索引自己的记录算期望值，不写死数字
+  const withExt = [];
+  const withoutExt = [];
+  for (const target of index.t) {
+    for (const [topBlockId, packed] of Object.entries(target.s)) {
+      (packed.x ? withExt : withoutExt).push({target, topBlockId, packed});
+    }
+  }
+  expect(withExt.length).toBeGreaterThan(0);
+  expect(index.x.music).toBe('');
+
+  // 把其中一个「依赖 music」的脚本改成「不依赖」，模拟这个脚本本来就只用了核心积木
+  const victim = withExt[0];
+  delete victim.packed.x;
+  const keepId = victim.topBlockId;
+
+  const vm = await newVm(stripped.buffer);
+  const report = installPrecompiledScripts(vm, index);
+
+  // music 没装：依赖它的脚本被跳过，其余（含刚改成不依赖的那个）照常装上 ——
+  // 作品不再整体变死，只是少了用到 music 的那部分行为
+  expect(report.unknownDependencies).toBe(false);
+  expect(report.installed).toBe(withoutExt.length + 1);
+  expect(report.skippedByExtension.length).toBe(withExt.length - 1);
+  expect(report.failed).toEqual([]);
+  expect(report.unavailableExtensions).toEqual(['music']);
+  expect(vm.runtime.targets.some((t) => t.blocks.getCachedCompileResult(keepId))).toBe(true);
+  expect(stats.compiled).toBe(withExt.length + withoutExt.length);
+});
+
+test('旧索引（没有按脚本依赖信息）仍然整体拒绝，不会误判成「无依赖」', async () => {
+  const buffer = readFixture(path.join('execute', 'tw-forkphorus-515-wait-zero-seconds-in-warp-mode.sb3'));
+  const {index} = await buildIndex(buffer);
+  const stripped = await stripArchive(buffer, index);
+
+  // 退回 v2 形态：版本号降级 + 抹掉 t[].x 与 s[].x
+  index.v = 2;
+  for (const target of index.t) {
+    delete target.x;
+    for (const packed of Object.values(target.s)) delete packed.x;
+  }
+
+  const vm = await newVm(stripped.buffer);
+  const report = installPrecompiledScripts(vm, index);
+
+  expect(report.unknownDependencies).toBe(true);
   expect(report.installed).toBe(0);
   expect(report.failed.length).toBe(1);
   expect(report.failed[0].message).toContain('music');
+});
+
+test('ensurePrecompiledExtensions 会等在途的扩展加载落地（回归：发射即忘的竞态）', async () => {
+  // 造一个假 manager：一开始「正在加载」，一个 tick 后才有扩展注册进来
+  const loaded = new Set();
+  let pending = 1;
+  const manager = {
+    _loadedExtensions: loaded,
+    loadingAsyncExtensions: 1,
+    isExtensionLoaded: (id) => loaded.has(id),
+    isBuiltinExtension: () => false,
+    loadExtensionURL: () => Promise.resolve()
+  };
+  const vm = {runtime: {extensionManager: manager}, extensionManager: manager};
+  const index = {v: 3, t: [], x: {music: ''}};
+
+  setTimeout(() => {
+    loaded.add('music');
+    pending = 0;
+    manager.loadingAsyncExtensions = 0;
+  }, 60);
+
+  const report = await ensurePrecompiledExtensions(vm, index, {waitForPendingMs: 2000});
+
+  expect(report.failed).toEqual([]);
+  expect(report.skipped).toEqual(['music']);
+  expect(report.waitedMs).toBeGreaterThan(0);
+  expect(pending).toBe(0);
+});
+
+test('扩展加载失败时会重试，并把失败的 URL 形态报出来', async () => {
+  let attempts = 0;
+  const loaded = new Set();
+  const manager = {
+    _loadedExtensions: loaded,
+    loadingAsyncExtensions: 0,
+    isExtensionLoaded: (id) => loaded.has(id),
+    isBuiltinExtension: () => false,
+    loadExtensionURL: () => {
+      attempts += 1;
+      if (attempts === 1) return Promise.reject(new Error('boom'));
+      loaded.add('tweening');
+      return Promise.resolve();
+    }
+  };
+  const vm = {runtime: {extensionManager: manager}, extensionManager: manager};
+  const index = {v: 3, t: [], x: {tweening: 'https://example.com/tween.js'}};
+
+  const retried = await ensurePrecompiledExtensions(vm, index, {retries: 1});
+  expect(attempts).toBe(2);
+  expect(retried.failed).toEqual([]);
+  expect(retried.loaded).toEqual(['tweening']);
+
+  // 一直失败的话：报出 id + URL 形态，别静默
+  const alwaysFail = {
+    ...manager,
+    isExtensionLoaded: () => false,
+    loadExtensionURL: () => Promise.reject(new Error('nope'))
+  };
+  const vm2 = {runtime: {extensionManager: alwaysFail}, extensionManager: alwaysFail};
+  const failed = await ensurePrecompiledExtensions(vm2, index, {retries: 0});
+  expect(failed.failed).toEqual([{
+    id: 'tweening',
+    url: 'https://example.com/tween.js',
+    kind: 'remote',
+    message: 'nope'
+  }]);
 });
 
 test('requireExtensions=false 时允许强行装载（给特殊场景留口子）', async () => {

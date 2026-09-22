@@ -17,6 +17,7 @@ const {
   ENTRY_KEY,
   FORMAT_VERSION,
   collectRuntimeRefs,
+  encodeScriptExtensions,
   extensionIdFromCompilerPackageName
 } = require('../../protect/index-format');
 
@@ -300,6 +301,8 @@ const compileProject = (vm, options = {}) => {
   for (const target of vm.runtime.targets) {
     const scripts = {};
     const targetScripts = target.blocks.getScripts();
+    // 本目标的脚本一共用到哪些扩展（按首次出现排序）；脚本上只存下标，省体积
+    const targetExtensionIds = [];
     for (const topBlockId of targetScripts) {
       scriptCount += 1;
       const thread = new Thread(topBlockId);
@@ -320,7 +323,16 @@ const compileProject = (vm, options = {}) => {
         for (const item of required) extensionRequirements.set(item.id, item.url);
         for (const code of collectRuntimeRefs(rawSourceList).addonCodes) addonCodes.add(code);
 
+        // 记录「这个脚本依赖哪些扩展」：运行时据此做**按脚本**的降级
+        // （某个扩展加载不上时只跳过用到它的脚本，而不是一条都不装 —— 见 precompiled.js）
+        const usedIds = [];
+        for (const item of required) {
+          if (!targetExtensionIds.includes(item.id)) targetExtensionIds.push(item.id);
+          if (!usedIds.includes(item.id)) usedIds.push(item.id);
+        }
+
         const packed = {e: sources[ENTRY_KEY], h: executableHat};
+        if (usedIds.length > 0) packed.x = encodeScriptExtensions(targetExtensionIds, usedIds);
         const procedures = {};
         let hasProcedures = false;
         for (const variant of Object.keys(sources)) {
@@ -343,7 +355,9 @@ const compileProject = (vm, options = {}) => {
     }
     if (targetScripts.length > 0) {
       // 按角色名索引：目标 id 每次加载都会变，不能用
-      targets.push({n: target.getName(), st: target.isStage ? 1 : 0, s: scripts});
+      const entry = {n: target.getName(), st: target.isStage ? 1 : 0, s: scripts};
+      if (targetExtensionIds.length > 0) entry.x = targetExtensionIds;
+      targets.push(entry);
     }
   }
 

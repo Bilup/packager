@@ -45,20 +45,34 @@ const getSb3 = () => {
 
 const toIndexObject = (index) => (typeof index === 'string' ? JSON.parse(index) : index);
 
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
 /**
  * 按索引声明把扩展装好。
  *
  * 积木被摘掉之后，sb3 反序列化再也扫不到扩展 opcode，内置扩展不会被自动加载，
  * 所以这里要显式补上。
  *
+ * ⚠️ 两条来自真实事故的经验：
+ *   1. **产物里启动扩展加载的地方是「发射即忘」的**（`loadExtensionURL()` 没有 await，
+ *      见 packager.js 生成的 `__BILUP_EXTENSION_LOADS__`）。所以这里不能只看一眼
+ *      `isExtensionLoaded()` 就下结论 —— 那会输给竞态，把「正在加载」误判成「加载不了」，
+ *      进而让整份预编译脚本被拒绝。所以先等 `loadingAsyncExtensions` 归零（有上限）。
+ *   2. 失败要**逐个重试**，并且把失败的 URL 一起报出来 —— 内联的 `data:` URL 失败
+ *      和远程 URL 失败完全是两回事，用户需要知道是哪一种。
+ *
  * @param {object} vm
  * @param {object|string} index
- * @returns {Promise<{loaded: string[], skipped: string[], failed: Array, addons: string[]}>}
+ * @param {object} [options]
+ * @param {number} [options.waitForPendingMs=15000] 等在途扩展加载的上限（毫秒）
+ * @param {number} [options.retries=1] 每个扩展失败后的重试次数
+ * @returns {Promise<{loaded: string[], skipped: string[], failed: Array, addons: string[], waitedMs: number}>}
  */
-const ensurePrecompiledExtensions = async (vm, index) => {
+const ensurePrecompiledExtensions = async (vm, index, options = {}) => {
+  const {waitForPendingMs = 15000, retries = 1} = options;
   const parsed = toIndexObject(index);
   const declared = parseExtensions(parsed);
-  const report = {loaded: [], skipped: [], failed: [], addons: []};
+  const report = {loaded: [], skipped: [], failed: [], addons: [], waitedMs: 0};
 
   const manager = vm.extensionManager || (vm.runtime && vm.runtime.extensionManager);
   if (!manager) {
@@ -69,27 +83,52 @@ const ensurePrecompiledExtensions = async (vm, index) => {
   const isLoaded = (id) =>
     typeof manager.isExtensionLoaded === 'function' && manager.isExtensionLoaded(id);
 
+  // 已经在加载中的先等它们落地 —— 否则会把「正在加载」误判成「加载不了」
+  const pending = () => (typeof manager.loadingAsyncExtensions === 'number' ? manager.loadingAsyncExtensions : 0);
+  if (pending() > 0) {
+    const started = Date.now();
+    while (pending() > 0 && Date.now() - started < waitForPendingMs) {
+      await sleep(50);
+    }
+    report.waitedMs = Date.now() - started;
+  }
+
   for (const {id, url} of declared) {
     if (isLoaded(id)) {
       report.skipped.push(id);
       continue;
     }
-    try {
-      if (!url && typeof manager.isBuiltinExtension === 'function' && manager.isBuiltinExtension(id)) {
-        manager.loadExtensionIdSync(id);
-        report.loaded.push(id);
-        continue;
+
+    let lastError = null;
+    for (let attempt = 0; attempt <= retries && !isLoaded(id); attempt++) {
+      try {
+        if (!url && typeof manager.isBuiltinExtension === 'function' && manager.isBuiltinExtension(id)) {
+          manager.loadExtensionIdSync(id);
+          break;
+        }
+        // 自定义扩展（有 URL）以及「按 id 兜底」的情况都走这里
+        if (typeof manager.loadExtensionURL === 'function') {
+          await manager.loadExtensionURL(url || id);
+          break;
+        }
+        lastError = new Error('这个 VM 不支持加载扩展');
+        break;
+      } catch (error) {
+        lastError = error;
       }
-      // 自定义扩展（有 URL）以及「按 id 兜底」的情况都走这里
-      if (typeof manager.loadExtensionURL === 'function') {
-        await manager.loadExtensionURL(url || id);
-        report.loaded.push(id);
-        continue;
-      }
-      report.failed.push({id, message: '这个 VM 不支持加载扩展'});
-    } catch (error) {
-      report.failed.push({id, message: `${(error && error.message) || error}`});
     }
+
+    if (isLoaded(id)) {
+      if (report.loaded.indexOf(id) === -1) report.loaded.push(id);
+      continue;
+    }
+    report.failed.push({
+      id,
+      url: url || '',
+      // 内联的 data: URL 失败和远程 URL 失败是两回事，把 URL 形态也带上
+      kind: !url ? 'builtin' : (url.startsWith('data:') ? 'inlined' : 'remote'),
+      message: `${(lastError && lastError.message) || '加载后仍未注册到 extensionManager'}`
+    });
   }
 
   // addon 积木只能由宿主 App 注册；注册不上就是硬故障，必须报出来而不是静默
@@ -165,12 +204,21 @@ const rebuildSkeletonBlocks = (vm, index) => {
  *
  * 前置条件：索引声明的扩展已经加载好（见 ensurePrecompiledExtensions）。
  *
+ * ⚠️ 扩展没就位时**不要整体拒绝**（那是踩过的坑）：
+ *   剥离模式下积木已经没了，整体拒绝等于「整个作品变成死的」—— 能打开、按绿旗什么都没反应。
+ *   索引 v3 起给每个脚本记了它依赖哪些扩展（`s[].x` + `t[].x`），所以这里可以做到：
+ *   **只跳过真正用到失败扩展的那些脚本**，其余照常装、照常跑，并把跳过了哪些如实报出来。
+ *   旧索引（没有按脚本依赖）拿不到这份信息时，才退回原来的严格判断。
+ *
  * @param {object} vm 已经加载完作品的 VM
  * @param {object|string} index 预编译索引（compile.js 的产物，或它的 JSON 文本）
  * @param {object} [options]
  * @param {Function} [options.scopedEval] 注入求值实现（测试用）
- * @param {boolean} [options.requireExtensions=true] 扩展没加载好时是否拒绝装载（默认拒绝，早失败好过晚崩）
- * @returns {{installed: number, targets: number, missing: Array, failed: Array, compilerForced: boolean, extensions: string[], skeleton: object}}
+ * @param {boolean} [options.requireExtensions=true] 扩展没加载好时是否启用降级判断（默认开）
+ * @param {string[]} [options.missingExtensions] 已知没加载上的扩展 id（由 ensurePrecompiledExtensions 报出来，避免重复探测）
+ * @returns {{installed: number, targets: number, missing: Array, failed: Array, skippedByExtension: Array,
+ *            compilerForced: boolean, extensions: string[], unavailableExtensions: string[],
+ *            unknownDependencies: boolean, skeleton: object}}
  */
 const installPrecompiledScripts = (vm, index, options = {}) => {
   const scopedEval = options.scopedEval || getScopedEval();
@@ -184,24 +232,41 @@ const installPrecompiledScripts = (vm, index, options = {}) => {
     targets: 0,
     missing: [],
     failed: [],
+    skippedByExtension: [],
     compilerForced: false,
     extensions: [],
+    unavailableExtensions: [],
+    unknownDependencies: false,
     skeleton: null
   };
 
   for (const {id} of parseExtensions(parsedIndex)) report.extensions.push(id);
 
-  // 扩展没就位的话，源码里固化的 getOpcodeFunction(...) 会是 undefined，跑起来必炸。
-  // 与其等到运行时崩在某个积木上，不如现在就说清楚。
-  if (requireExtensions) {
-    const manager = vm.extensionManager || (runtime && runtime.extensionManager);
-    const notReady = report.extensions.filter((id) =>
-      !(manager && typeof manager.isExtensionLoaded === 'function' && manager.isExtensionLoaded(id)));
-    if (notReady.length > 0) {
+  const manager = vm.extensionManager || (runtime && runtime.extensionManager);
+  const isReady = (id) =>
+    !!(manager && typeof manager.isExtensionLoaded === 'function' && manager.isExtensionLoaded(id));
+  // 索引声明了、但当前没就位的扩展
+  const notReady = new Set(
+    (options.missingExtensions || report.extensions.filter((id) => !isReady(id)))
+  );
+  report.unavailableExtensions = Array.from(notReady);
+
+  // 旧索引没有「按脚本依赖」这份信息 → 只能退回严格判断：有一条不齐就整体不装
+  if (requireExtensions && notReady.size > 0) {
+    let anyKnown = false;
+    for (const entry of parsed.values()) {
+      for (const packed of entry.scripts.values()) {
+        // null = 索引没记（v1/v2）；数组（含空数组）= 记了
+        if (packed.extensions !== null && packed.extensions !== undefined) anyKnown = true;
+      }
+    }
+    if (!anyKnown) {
+      report.unknownDependencies = true;
       report.failed.push({
         target: '*',
         topBlockId: '*',
-        message: `这些扩展还没加载，拒绝装载预编译脚本：${notReady.join(', ')}（必须先调用 ensurePrecompiledExtensions）`
+        message: '这些扩展还没加载，且索引没有记录按脚本的依赖，无法做降级，拒绝装载预编译脚本：' +
+          `${report.unavailableExtensions.join(', ')}`
       });
       return report;
     }
@@ -234,6 +299,19 @@ const installPrecompiledScripts = (vm, index, options = {}) => {
         report.missing.push({target: target.getName(), topBlockId});
         continue;
       }
+
+      // 这个脚本依赖的扩展有没有缺的？缺了就跳过它，别拖累别的脚本
+      const needs = packed.extensions === undefined ? null : packed.extensions;
+      const blockedBy = needs === null ? [] : needs.filter((id) => notReady.has(id));
+      if (blockedBy.length > 0) {
+        report.skippedByExtension.push({
+          target: target.getName(),
+          topBlockId,
+          extensions: blockedBy
+        });
+        continue;
+      }
+
       try {
         const procedures = {};
         for (const variant of Object.keys(packed.procedures)) {
@@ -261,19 +339,49 @@ const installPrecompiledScripts = (vm, index, options = {}) => {
 /**
  * 推荐入口：先加载扩展、再装编译缓存，顺序不会错。
  *
+ * `ok` 的语义是「这份产物完整可跑」：
+ * 扩展全就位、脚本全装上、没有跳过的脚本、没有 addon 缺口。
+ * 部分降级时 `ok=false` 但 `install.installed > 0` —— 此时作品大体能跑，
+ * 只有依赖失败扩展的那些脚本不会动。调用方**必须把结果报出来**，不要静默。
+ *
  * @param {object} vm
  * @param {object|string} index
- * @param {object} [options] 透传给 installPrecompiledScripts
- * @returns {Promise<{extensions: object, install: object, ok: boolean}>}
+ * @param {object} [options] `ensure`/`install` 两组子选项：
+ *   `{ensure: {...}}` 透传给 ensurePrecompiledExtensions，
+ *   `{install: {...}}` 透传给 installPrecompiledScripts，其余字段按 install 处理（向后兼容）
+ * @returns {Promise<{extensions: object, install: object, ok: boolean, summary: string}>}
  */
 const applyPrecompiled = async (vm, index, options = {}) => {
-  const extensions = await ensurePrecompiledExtensions(vm, index);
-  const install = installPrecompiledScripts(vm, index, options);
-  return {
-    extensions,
-    install,
-    ok: install.failed.length === 0 && extensions.failed.length === 0
-  };
+  const ensureOptions = options.ensure || {};
+  const installOptions = options.install || {};
+  const extensions = await ensurePrecompiledExtensions(vm, index, ensureOptions);
+
+  const unavailable = extensions.failed.map((item) => item.id);
+  const install = installPrecompiledScripts(vm, index, {
+    ...options,
+    ...installOptions,
+    missingExtensions: unavailable
+  });
+
+  const ok = install.failed.length === 0 &&
+    install.missing.length === 0 &&
+    install.skippedByExtension.length === 0 &&
+    extensions.failed.length === 0 &&
+    extensions.addons.length === 0;
+
+  const bits = [`安装 ${install.installed} 个脚本`];
+  if (install.skippedByExtension.length > 0) {
+    bits.push(`因扩展没就位跳过 ${install.skippedByExtension.length} 个脚本` +
+      `（${Array.from(new Set(install.skippedByExtension.flatMap((item) => item.extensions))).join(', ')}）`);
+  }
+  if (extensions.failed.length > 0) {
+    bits.push(`扩展加载失败：${extensions.failed.map((item) => `${item.id}(${item.kind})`).join(', ')}`);
+  }
+  if (extensions.addons.length > 0) bits.push(`缺少 addon 积木：${extensions.addons.join(', ')}`);
+  if (install.missing.length > 0) bits.push(`骨架里缺 ${install.missing.length} 个顶层积木`);
+  if (install.failed.length > 0) bits.push(`${install.failed.length} 个脚本求值失败`);
+
+  return {extensions, install, ok, summary: bits.join('；')};
 };
 
 /**
