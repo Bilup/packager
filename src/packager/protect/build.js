@@ -18,6 +18,7 @@
 
 const {compileProject, verifyIndex} = require('./compile');
 const {stripProjectBlocks} = require('./skeleton');
+const {installExtensionLoadShims} = require('./extension-load-shim');
 
 const PROGRESS = {
   load: 0.15,
@@ -62,7 +63,63 @@ const makeBuildVm = (compilerOptions) => {
     enabled: true,
     warpTimer: !!(compilerOptions && compilerOptions.warpTimer)
   });
+  attachBuildStorage(vm);
   return vm;
+};
+
+/**
+ * 给构建 VM 挂一个 storage。
+ *
+ * 编译本身用不到 storage，但**反序列化用得到**：新版 scratch-vm 的
+ * `FontManager.deserialize` 会读 `runtime.storage.AssetType.Font`
+ * （engine/tw-font-manager.js，配合 util/tw-asset-util.js 的 getByMd5ext），
+ * 工程只要带自定义字体就会在这一步抛
+ * `Cannot read properties of undefined (reading 'AssetType')`。
+ *
+ * 而 `createBuildVm` 一旦抛错就会**整份放弃预编译**（不是「部分降级」）——
+ * 所以少这一个 storage，带自定义字体的工程会静默丢掉全部保护，
+ * 只剩混淆那一层（实测：33MB 的 PVZ 工程，8 种保护等级的产物索引全是空的）。
+ *
+ * 用 scratch-storage 本体即可：它不依赖 DOM，`AssetType` / `createAsset` 在 Node 里都能用。
+ */
+const attachBuildStorage = (vm) => {
+  if (vm.runtime.storage) return;
+  const storageModule = require('@bilup/scratch-storage');
+  const ScratchStorage = storageModule.default || storageModule;
+  vm.attachStorage(new ScratchStorage());
+};
+
+/**
+ * 加载工程 —— 但加载期间先把编译器关掉。
+ *
+ * 新版 scratch-vm 在 `handleProjectLoaded()` 里会 `setTimeout(…, 0)` 调 `_prewarmCompiler()`，
+ * 把工程里**全部脚本**预先编译一遍塞进编译缓存（把首次执行的开销挪到加载时）。
+ * 对打包期的构建 VM 来说这是纯粹的重复劳动：紧接着 compileProject 就要自己编译一遍，
+ * 而且这次预热只写进编译缓存 —— 索引是按 IRGenerator 的结果生成的，用不到它。
+ *
+ * 更麻烦的是它留下一个**延迟任务**：`_prewarmCompiler` 里 `require('../compiler/compile')`
+ * 与 `threadPool.acquire()` 都是即时 require，跑到 jest 环境已经拆除之后就会
+ * `Thread is not a constructor` 并直接搞死 worker 进程（实测）。
+ *
+ * 所以加载期间把 enabled 关掉（`_prewarmCompiler` 开头就会 return），加载完再恢复 ——
+ * warpTimer 必须原样恢复，它影响生成码（irgen 会把它写进 IR）。
+ *
+ * ⚠️ 光「加载期间关掉」不够：预热是 `setTimeout(…, 0)` 排的，而 `handleProjectLoaded()`
+ *    在 loadProject 内部**同步**跑（virtual-machine.js:592），也就是说 await 一返回，
+ *    那个定时器早就排好了 —— 等它真的跑起来时 enabled 已经被恢复，照样预热。
+ *    所以下面额外让出一个宏任务，让它在「编译器关着」的状态下跑掉（此时它直接 return）。
+ */
+const loadProjectForBuild = async (vm, projectBuffer, compilerOptions) => {
+  const warpTimer = !!(compilerOptions && compilerOptions.warpTimer);
+  vm.setCompilerOptions({enabled: false, warpTimer});
+  try {
+    await vm.loadProject(projectBuffer);
+    // 让出**一个宏任务**：上面 handleProjectLoaded 排下的那个 setTimeout(…, 0) 会在这段时间里
+    // 跑掉，此时 enabled 还是 false，_prewarmCompiler 第一行就 return。
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  } finally {
+    vm.setCompilerOptions({enabled: true, warpTimer});
+  }
 };
 
 /**
@@ -81,13 +138,17 @@ const makeBuildVm = (compilerOptions) => {
  *      二级：用默认策略（拒绝加载工程内嵌扩展）。这样反序列化不会再因扩展而失败，
  *            代价只是引用那些扩展的脚本编译不了、退回「保留积木」，其余脚本照常预编译。
  *            总比整份放弃预编译强。
+ *
+ * ⚠️ Node 里没有 DOM，而 TurboWarp 的非沙箱扩展是「往页面插 <script>」执行的，
+ *    所以下面用 createBuildVm 包了一层最小垫片（见 extension-load-shim.js）。
+ *    没有它时一个扩展都装不上，一级降级必然失败。
  */
-const createBuildVm = async (projectBuffer, compilerOptions, extraExtensions, warnings) => {
+const createBuildVmInner = async (projectBuffer, compilerOptions, extraExtensions, warnings) => {
   const vm = makeBuildVm(compilerOptions);
   openExtensionSecurity(vm);
   await loadExtraExtensions(vm, extraExtensions, warnings);
   try {
-    await vm.loadProject(projectBuffer);
+    await loadProjectForBuild(vm, projectBuffer, compilerOptions);
     return vm;
   } catch (error) {
     const message = (error && error.message) || `${error}`;
@@ -98,8 +159,23 @@ const createBuildVm = async (projectBuffer, compilerOptions, extraExtensions, wa
 
   const fallbackVm = makeBuildVm(compilerOptions);
   await loadExtraExtensions(fallbackVm, extraExtensions, warnings);
-  await fallbackVm.loadProject(projectBuffer);
+  await loadProjectForBuild(fallbackVm, projectBuffer, compilerOptions);
   return fallbackVm;
+};
+
+/**
+ * createBuildVmInner 的包装：整段「装扩展 + 加载工程」都在浏览器垫片里跑。
+ *
+ * 还原放在 finally 里 —— 垫片会改 `globalThis.document/window/location`，
+ * 不能让它们泄漏到打包器后续的代码里（那些代码可能据此切换浏览器/Node 分支）。
+ */
+const createBuildVm = async (projectBuffer, compilerOptions, extraExtensions, warnings) => {
+  const restoreShims = installExtensionLoadShims();
+  try {
+    return await createBuildVmInner(projectBuffer, compilerOptions, extraExtensions, warnings);
+  } finally {
+    restoreShims();
+  }
 };
 
 /**
