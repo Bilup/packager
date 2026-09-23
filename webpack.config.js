@@ -274,6 +274,9 @@ const makeNode = () => ({
     '@fiahfy/icns': '@fiahfy/icns',
     'cross-fetch': 'cross-fetch',
     'sha.js': 'sha.js',
+    // terser 只在压缩预编译脚本时才用到（懒加载），保持外部依赖即可，
+    // 免得把 353KB 的它塞进发布出去的单文件 UMD 包里。
+    terser: 'terser'
   },
   module: {
     rules: [
