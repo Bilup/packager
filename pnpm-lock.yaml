@@ -85,14 +85,14 @@ importers:
         specifier: ^2.7.1
         version: 2.7.1
       scratch-audio:
-        specifier: https://github.com/Bilup/scratch-audio/tarball/6b71026b568d63998b647409ffe360cc6d772c32
-        version: https://github.com/Bilup/scratch-audio/tarball/6b71026b568d63998b647409ffe360cc6d772c32
+        specifier: https://github.com/Bilup/scratch-audio/tarball/4a4e4b225280eb4541d6997aa22f678a35ab1ae6
+        version: https://github.com/Bilup/scratch-audio/tarball/4a4e4b225280eb4541d6997aa22f678a35ab1ae6
       scratch-render:
-        specifier: https://github.com/Bilup/scratch-render/tarball/a2f262093a8d8dc83409942f2068b3e762634a77
-        version: https://github.com/Bilup/scratch-render/tarball/a2f262093a8d8dc83409942f2068b3e762634a77(webpack@4.47.0)
+        specifier: https://github.com/Bilup/scratch-render/tarball/c1ce2fbdda52d5470ebe855c6c168a51b0720048
+        version: https://github.com/Bilup/scratch-render/tarball/c1ce2fbdda52d5470ebe855c6c168a51b0720048(webpack@4.47.0)
       scratch-vm:
-        specifier: https://github.com/Bilup/scratch-vm/tarball/eb38a99bb2c090279e4ed1b0c1b5f2961393f7fc
-        version: https://github.com/Bilup/scratch-vm/tarball/eb38a99bb2c090279e4ed1b0c1b5f2961393f7fc(@bilup/scratch-svg-renderer@https://github.com/Bilup/scratch-svg-renderer/tarball/6ce586a4ad1b9b98441eee6d7304f529be0ae9ef(scratch-render-fonts@https://codeload.github.com/Bilup/scratch-render-fonts/tar.gz/d09642667e6b3ca7cf9420cd92350ce177694ad5))(eslint@10.11.0)(webpack@4.47.0)
+        specifier: https://github.com/Bilup/scratch-vm/tarball/43b2de8fee862b85e997bebff71e96c370a8b501
+        version: https://github.com/Bilup/scratch-vm/tarball/43b2de8fee862b85e997bebff71e96c370a8b501(@bilup/scratch-svg-renderer@https://github.com/Bilup/scratch-svg-renderer/tarball/6ce586a4ad1b9b98441eee6d7304f529be0ae9ef(scratch-render-fonts@https://codeload.github.com/Bilup/scratch-render-fonts/tar.gz/d09642667e6b3ca7cf9420cd92350ce177694ad5))(eslint@10.11.0)(webpack@4.47.0)
       style-loader:
         specifier: ^2.0.0
         version: 2.0.0(webpack@4.47.0)
@@ -4395,14 +4395,6 @@ packages:
     resolution: {integrity: sha512-CHhPh+UNHD2GTXNYhPWLnU8ONHdI+5DI+4EYIAOaiD63rHeYlZvyh8P+in5999TTSFgUYuKUAjzRI4mdh/p+2A==}
     engines: {node: '>=8.0'}
 
-  rotur-sdk@1.3.4:
-    resolution: {integrity: sha512-UFy5NJ1jVJY6Z3r2uXYQ7UKBHmhCJUUIBNSyFK6Alu9c/MoETVFhgR0yU50EvFj2IsERpy2cNqNjN3FYhInNzQ==}
-    peerDependencies:
-      ts-morph: ^28.0.0
-    peerDependenciesMeta:
-      ts-morph:
-        optional: true
-
   run-parallel@1.2.0:
     resolution: {integrity: sha512-5l4VyZR86LZ/lDxZTR6jqL8AFE2S0IFLMP26AbjsLVADxHdhB/c0GUsH+y39UfCi3dzz8OlQuPmnaJOMoDHQBA==}
 
@@ -4453,8 +4445,8 @@ packages:
     resolution: {integrity: sha512-pN/yOAvcC+5rQ5nERGuwrjLlYvLTbCibnZ1I7B1LaiAz9BRBlE9GMgE/eqV30P7aJQUf7Ddimy/RsbYO/GrVGg==}
     engines: {node: '>= 10.13.0'}
 
-  scratch-audio@https://github.com/Bilup/scratch-audio/tarball/6b71026b568d63998b647409ffe360cc6d772c32:
-    resolution: {integrity: sha512-hE2W8RlzVzVltJMjbJ8Fnyp7cmXsGNOUI0IRSC4LS7gGzHLg9BMlBHEvw2qwyWeFopmFaaafW7FAx6i5tWFGgQ==, tarball: https://github.com/Bilup/scratch-audio/tarball/6b71026b568d63998b647409ffe360cc6d772c32}
+  scratch-audio@https://github.com/Bilup/scratch-audio/tarball/4a4e4b225280eb4541d6997aa22f678a35ab1ae6:
+    resolution: {integrity: sha512-fcVIVNgzLIdwFdgjE1oZs9GcJCmGrrAyRTdfNqgixyOh761wmAD0IfcFSFWbr9kgVUoCWo9nLA9IgyZHma/OlA==, tarball: https://github.com/Bilup/scratch-audio/tarball/4a4e4b225280eb4541d6997aa22f678a35ab1ae6}
     version: 0.1.0
 
   scratch-parser@https://codeload.github.com/Bilup/scratch-parser/tar.gz/87a26f096e719e2204f96bfb859e10a709449e59:
@@ -4466,8 +4458,8 @@ packages:
     resolution: {tarball: https://codeload.github.com/Bilup/scratch-render-fonts/tar.gz/d09642667e6b3ca7cf9420cd92350ce177694ad5}
     version: 1.0.0
 
-  scratch-render@https://github.com/Bilup/scratch-render/tarball/a2f262093a8d8dc83409942f2068b3e762634a77:
-    resolution: {integrity: sha512-Rz6CB9soKeZ5iNQcG5QDsMdhtPO+dWcHsyJ5vGr3iejt7aFdwSZgIyVlSpJQYfpIrAV2Rdp6GKYFeQ+B4UkubA==, tarball: https://github.com/Bilup/scratch-render/tarball/a2f262093a8d8dc83409942f2068b3e762634a77}
+  scratch-render@https://github.com/Bilup/scratch-render/tarball/c1ce2fbdda52d5470ebe855c6c168a51b0720048:
+    resolution: {integrity: sha512-u4KeLQfBCu7Jgf8UI1c1nnCkD0u/WaWP39qZGrM/NfV12KmCws6iGaqR6el8uYOlvHZp19FunQHU7qs4JOZ1iQ==, tarball: https://github.com/Bilup/scratch-render/tarball/c1ce2fbdda52d5470ebe855c6c168a51b0720048}
     version: 0.1.0
 
   scratch-sb1-converter@0.2.7:
@@ -4479,8 +4471,8 @@ packages:
   scratch-translate-extension-languages@0.0.20191118205314:
     resolution: {integrity: sha512-r0lvpgQjPMjbhI2wROrgoXzBhCvWJdkbAqJMfl2CdNqrwBpUXqLvNNtI3VtNLPJAcp9VfxEylkU9lVZ0gvU46Q==}
 
-  scratch-vm@https://github.com/Bilup/scratch-vm/tarball/eb38a99bb2c090279e4ed1b0c1b5f2961393f7fc:
-    resolution: {integrity: sha512-eEntlsR+rHTf1EnLzk5EWqnFNUPsjGkSq9drZgIiYNOncewAxvu1t7B714thlcJVfbujCXvk05RFq7WO8x39Uw==, tarball: https://github.com/Bilup/scratch-vm/tarball/eb38a99bb2c090279e4ed1b0c1b5f2961393f7fc}
+  scratch-vm@https://github.com/Bilup/scratch-vm/tarball/43b2de8fee862b85e997bebff71e96c370a8b501:
+    resolution: {tarball: https://github.com/Bilup/scratch-vm/tarball/43b2de8fee862b85e997bebff71e96c370a8b501}
     version: 2.1.46
     peerDependencies:
       '@bilup/scratch-svg-renderer': github:Bilup/scratch-svg-renderer#develop-builds
@@ -5127,7 +5119,6 @@ packages:
 
   uuid@8.3.2:
     resolution: {integrity: sha512-+NYs2QeMWy+GWFOEm9xnn6HCDp0l7QBD7ml8zLUmJ+93Q5NF0NocErnwkTkXVFNiX3/fpC6afS8Dhb/gz7R7eg==}
-    deprecated: uuid@10 and below is no longer supported.  For ESM codebases, update to uuid@latest.  For CommonJS codebases, use uuid@11 (but be aware this version will likely be deprecated in 2028).
     hasBin: true
 
   v8-to-istanbul@8.1.1:
@@ -10687,8 +10678,6 @@ snapshots:
       sprintf-js: 1.1.3
     optional: true
 
-  rotur-sdk@1.3.4: {}
-
   run-parallel@1.2.0:
     dependencies:
       queue-microtask: 1.2.3
@@ -10753,7 +10742,7 @@ snapshots:
       ajv: 6.15.0
       ajv-keywords: 3.5.2(ajv@6.15.0)
 
-  scratch-audio@https://github.com/Bilup/scratch-audio/tarball/6b71026b568d63998b647409ffe360cc6d772c32:
+  scratch-audio@https://github.com/Bilup/scratch-audio/tarball/4a4e4b225280eb4541d6997aa22f678a35ab1ae6:
     dependencies:
       '@turbowarp/nanolog': 0.2.0
       '@turbowarp/startaudiocontext': 1.0.0
@@ -10770,7 +10759,7 @@ snapshots:
     dependencies:
       base64-loader: 1.0.0
 
-  scratch-render@https://github.com/Bilup/scratch-render/tarball/a2f262093a8d8dc83409942f2068b3e762634a77(webpack@4.47.0):
+  scratch-render@https://github.com/Bilup/scratch-render/tarball/c1ce2fbdda52d5470ebe855c6c168a51b0720048(webpack@4.47.0):
     dependencies:
       '@bilup/scratch-svg-renderer': https://codeload.github.com/Bilup/scratch-svg-renderer/tar.gz/cb48d4ab124c86cd355f500a4abdb41b3a560af8(scratch-render-fonts@https://codeload.github.com/Bilup/scratch-render-fonts/tar.gz/d09642667e6b3ca7cf9420cd92350ce177694ad5)
       '@turbowarp/ancient-hull.js': 0.2.13
@@ -10804,7 +10793,7 @@ snapshots:
 
   scratch-translate-extension-languages@0.0.20191118205314: {}
 
-  scratch-vm@https://github.com/Bilup/scratch-vm/tarball/eb38a99bb2c090279e4ed1b0c1b5f2961393f7fc(@bilup/scratch-svg-renderer@https://github.com/Bilup/scratch-svg-renderer/tarball/6ce586a4ad1b9b98441eee6d7304f529be0ae9ef(scratch-render-fonts@https://codeload.github.com/Bilup/scratch-render-fonts/tar.gz/d09642667e6b3ca7cf9420cd92350ce177694ad5))(eslint@10.11.0)(webpack@4.47.0):
+  scratch-vm@https://github.com/Bilup/scratch-vm/tarball/43b2de8fee862b85e997bebff71e96c370a8b501(@bilup/scratch-svg-renderer@https://github.com/Bilup/scratch-svg-renderer/tarball/6ce586a4ad1b9b98441eee6d7304f529be0ae9ef(scratch-render-fonts@https://codeload.github.com/Bilup/scratch-render-fonts/tar.gz/d09642667e6b3ca7cf9420cd92350ce177694ad5))(eslint@10.11.0)(webpack@4.47.0):
     dependencies:
       '@bilup/scratch-svg-renderer': https://github.com/Bilup/scratch-svg-renderer/tarball/6ce586a4ad1b9b98441eee6d7304f529be0ae9ef(scratch-render-fonts@https://codeload.github.com/Bilup/scratch-render-fonts/tar.gz/d09642667e6b3ca7cf9420cd92350ce177694ad5)
       '@turbowarp/json': 0.1.2
@@ -10822,7 +10811,6 @@ snapshots:
       format-message: 6.2.1
       htmlparser2: 3.10.0
       immutable: 3.8.2
-      rotur-sdk: 1.3.4
       scratch-parser: https://codeload.github.com/Bilup/scratch-parser/tar.gz/87a26f096e719e2204f96bfb859e10a709449e59
       scratch-sb1-converter: 0.2.7
       scratch-translate-extension-languages: 0.0.20191118205314
@@ -10831,7 +10819,6 @@ snapshots:
       worker-loader: 1.1.1(webpack@4.47.0)
     transitivePeerDependencies:
       - eslint
-      - ts-morph
       - webpack
 
   select-hose@2.0.0: {}
