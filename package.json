@@ -64,7 +64,7 @@
     "rimraf": "^2.7.1",
     "scratch-audio": "https://github.com/Bilup/scratch-audio/tarball/4a4e4b225280eb4541d6997aa22f678a35ab1ae6",
     "scratch-render": "https://github.com/Bilup/scratch-render/tarball/c1ce2fbdda52d5470ebe855c6c168a51b0720048",
-    "scratch-vm": "https://github.com/Bilup/scratch-vm/tarball/43b2de8fee862b85e997bebff71e96c370a8b501",
+    "scratch-vm": "https://github.com/Bilup/scratch-vm/tarball/667bfc69de5369749e92e13108030e59dc9fdd6b",
     "style-loader": "^2.0.0",
     "svelte": "^3.44.3",
     "svelte-loader": "^3.1.2",
