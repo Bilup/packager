@@ -1481,20 +1481,22 @@ ${closeTag}`;
       }
       result.push(`
       <script>
-      const getBase85DecodeValue = (code) => {
-        if (code === 0x28) code = 0x3c;
-        if (code === 0x29) code = 0x3e;
-        return code - 0x2a;
-      };
+      // '<' 和 '>' 在编码时分别替换成 '(' 和 ')'（见 base85.js），
+      // 因此预先建一张查表，避免逐个字符做分支判断。
+      const base85DecodeTable = new Uint8Array(0x7f);
+      for (let i = 0x2a; i <= 0x7e; i++) base85DecodeTable[i] = i - 0x2a;
+      base85DecodeTable[0x28] = 0x3c - 0x2a;
+      base85DecodeTable[0x29] = 0x3e - 0x2a;
       const base85decode = (str, outBuffer, outOffset) => {
         const view = new DataView(outBuffer, outOffset, Math.floor(str.length / 5 * 4));
+        const table = base85DecodeTable;
         for (let i = 0, j = 0; i < str.length; i += 5, j += 4) {
           view.setUint32(j, (
-            getBase85DecodeValue(str.charCodeAt(i + 4)) * 85 * 85 * 85 * 85 +
-            getBase85DecodeValue(str.charCodeAt(i + 3)) * 85 * 85 * 85 +
-            getBase85DecodeValue(str.charCodeAt(i + 2)) * 85 * 85 +
-            getBase85DecodeValue(str.charCodeAt(i + 1)) * 85 +
-            getBase85DecodeValue(str.charCodeAt(i))
+            table[str.charCodeAt(i + 4)] * 52200625 +
+            table[str.charCodeAt(i + 3)] * 614125 +
+            table[str.charCodeAt(i + 2)] * 7225 +
+            table[str.charCodeAt(i + 1)] * 85 +
+            table[str.charCodeAt(i)]
           ), true);
         }
       };
@@ -1512,8 +1514,9 @@ ${closeTag}`;
       };
       </script>`);
 
-      // To avoid unnecessary padding, this should be a multiple of 4.
-      const CHUNK_SIZE = 1024 * 64;
+      // 为避免多余的补齐字节，这里必须是 4 的倍数。分片更大意味着启动时
+      // 需要解析、执行的 <script> 标签更少。
+      const CHUNK_SIZE = 1024 * 256;
 
       for (let i = 0; i < projectData.length; i += CHUNK_SIZE) {
         const projectChunk = projectData.subarray(i, i + CHUNK_SIZE);
@@ -1575,6 +1578,34 @@ ${closeTag}`;
         storage.onprogress = (total, loaded) => {
           setProgress(interpolate(${storageProgressStart}, ${storageProgressEnd}, loaded / total));
         };
+        // 限制同时取回/解压的素材数量。不设上限时所有造型会同时开始加载，
+        // 造成内存峰值。VM 自身另有 12 路图片解码上限，这里限制的是更早的
+        // 取回/解压阶段，两者互不替代。
+        const MAX_CONCURRENT_ASSET_LOADS = 50;
+        const assetLoadQueue = [];
+        let activeAssetLoads = 0;
+        const pumpAssetLoadQueue = () => {
+          while (activeAssetLoads < MAX_CONCURRENT_ASSET_LOADS && assetLoadQueue.length > 0) {
+            const job = assetLoadQueue.shift();
+            activeAssetLoads++;
+            Promise.resolve().then(job.start).then(
+              value => {
+                job.resolve(value);
+                activeAssetLoads--;
+                pumpAssetLoadQueue();
+              },
+              error => {
+                job.reject(error);
+                activeAssetLoads--;
+                pumpAssetLoadQueue();
+              }
+            );
+          }
+        };
+        const loadAssetLimited = (start) => new Promise((resolve, reject) => {
+          assetLoadQueue.push({start, resolve, reject});
+          pumpAssetLoadQueue();
+        });
         ${isZip ? `
         let zip;
         // Allow zip to be GC'd after project loads
@@ -1590,9 +1621,9 @@ ${closeTag}`;
             if (!file) {
               throw new Error('Asset is not in zip: ' + path)
             }
-            return file
+            return loadAssetLimited(() => file
               .async('uint8array')
-              .then((data) => storage.createAsset(assetType, dataFormat, data, assetId));
+              .then((data) => storage.createAsset(assetType, dataFormat, data, assetId)));
           }
         });
         return () => (${getProjectDataFunction})().then(async (data) => {
@@ -1612,6 +1643,10 @@ ${closeTag}`;
           ].filter(i => i),
           (asset) => new URL('./assets/' + asset.assetId + '.' + asset.dataFormat, location).href
         );
+        if (storage.webHelper && typeof storage.webHelper.load === 'function') {
+          const originalLoad = storage.webHelper.load.bind(storage.webHelper);
+          storage.webHelper.load = (...args) => loadAssetLimited(() => originalLoad(...args));
+        }
         return ${getProjectDataFunction};`}
       })();
     </script>`);
