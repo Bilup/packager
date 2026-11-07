@@ -40,8 +40,12 @@ jobs:
     - uses: actions/download-artifact@v4
       with:
         name: standalone
+    - name: Rename artifact
+      run: |
+        VERSION="${GITHUB_REF_NAME#v}"
+        mv standalone.html "bilup-packager-standalone-${VERSION}.html"
     - name: Create Release
       uses: softprops/action-gh-release@v2
       with:
-        files: standalone.html
+        files: bilup-packager-standalone-*.html
         generate_release_notes: true
