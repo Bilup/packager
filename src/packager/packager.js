@@ -1828,6 +1828,8 @@ ${closeTag}`;
       height: 10px;
       width: 200px;
       max-width: 200px;
+      /* 进度条不允许被压缩，否则图片一高就把它挤出视口 */
+      flex: none;
     }
     .progress-bar-inner {
       height: 100%;
@@ -1838,9 +1840,25 @@ ${closeTag}`;
       font-weight: normal;
       font-size: 36px;
       margin: 0 0 16px;
+      flex: none;
     }
     .loading-image {
       margin: 0 0 16px;
+      max-width: 100%;
+      /* 图片按原始尺寸展示时会比视口还高。这里让它作为可收缩的 flex 项，
+         并把自身限制在剩余空间内，保证下面的进度条始终可见 */
+      min-height: 0;
+      flex: 0 1 auto;
+      overflow: hidden;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+    }
+    .loading-image img {
+      display: block;
+      max-width: 100%;
+      max-height: 100%;
+      object-fit: contain;
     }
     #error-message, #error-stack {
       font-family: monospace;
