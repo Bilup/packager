@@ -78,10 +78,19 @@ const countBlocks = async (buffer) => {
   return total;
 };
 
+/**
+ * 按**生产路径**编译：`build.js` 在 terser 可用时一定会 `minify: true`，
+ * 也就是一定会跑「压缩 + 结构硬化（字符串表 / 属性名查表 / helper 别名 / 切断 return 链）」。
+ * 所以这里也必须开着，否则下面的行为等价性测试根本没覆盖到保护层
+ * —— 那是踩过的坑：保护逻辑写错了、但测试全绿，因为测试压根没跑保护逻辑。
+ */
 const buildIndex = async (buffer) => {
   const vm = await newVm(buffer);
   const json = await readProjectJSON(buffer);
-  const {index, failures, stats} = compileProject(vm, {extensionURLs: json.extensionURLs || {}});
+  const {index, failures, stats} = compileProject(vm, {
+    extensionURLs: json.extensionURLs || {},
+    minify: true
+  });
   return {index, failures, stats};
 };
 
@@ -92,6 +101,9 @@ test('预编译 + 剥离积木后行为与原始工程一致（无扩展工程�
   const {index, failures, stats} = await buildIndex(buffer);
   expect(failures).toEqual([]);
   expect(stats.compiled).toBe(stats.scripts);
+  // 硬化必须真的生效 —— 而不是悄悄退回压缩版（那样测试全绿但保护是空的）
+  expect(stats.hardened).toBe(stats.minified);
+  expect(stats.hardenFailed).toBe(0);
   expect(verifyIndex(index).ok).toBe(true);
 
   const stripped = await stripArchive(buffer, index);
@@ -111,6 +123,30 @@ test('预编译 + 剥离积木后行为与原始工程一致（无扩展工程�
 
   expect(snapshot(protectedVm)).toEqual(snapshot(original));
 }, 60000);
+
+test('自定义积木的变体名不再带 proccode（`Z自定义积木%s` → `#0`）', async () => {
+  // 变体名原来长这样：Z<proccode> / W<proccode>，而 proccode 就是「自定义积木的名字 + 参数形状」。
+  // 它同时出现在索引的 p 键和生成码的 thread.procedures["Z…"] 里，等于把作品的积木结构白送。
+  const buffer = readFixture(path.join('execute', 'tw-comparison-matrix-runtime.sb3'));
+  const {index, stats} = await buildIndex(buffer);
+  expect(stats.renamedProcedures).toBeGreaterThan(0);
+
+  let variantCount = 0;
+  for (const target of index.t) {
+    for (const packed of Object.values(target.s)) {
+      for (const variant of Object.keys(packed.p || {})) {
+        variantCount += 1;
+        expect(variant).toMatch(/^#\d+(_\d+)?$/);
+      }
+    }
+  }
+  expect(variantCount).toBeGreaterThan(0);
+
+  // 源码里也不该再有 `"Z…"` 这样的过程名字面量
+  const text = JSON.stringify(index);
+  expect(text).not.toMatch(/"Z[^"]*"\s*:/);
+  expect(text).not.toMatch(/"W[^"]*"\s*:/);
+});
 
 test('剥离积木后不注入缓存就完全跑不起来（对照组，证明逻辑确实被摘掉了）', async () => {
   const buffer = readFixture(path.join('execute', 'tw-comparison-matrix-runtime.sb3'));
@@ -328,7 +364,9 @@ test('索引是可序列化的纯 JSON，且体积可控', async () => {
   for (const target of parsed.t) {
     for (const packed of Object.values(target.s)) {
       expect(typeof packed.e).toBe('string');
-      expect(typeof packed.h).toBe('boolean');
+      // 可执行帽子是少数：为真才写，为假直接省掉这个键
+      // （少一个恒为 false 的字段，也就少一条「这个脚本是不是帽子」的现成线索）
+      if ('h' in packed) expect(packed.h).toBe(1);
     }
   }
 });

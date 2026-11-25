@@ -22,7 +22,7 @@ const {
 } = require('../../protect/index-format');
 
 // 只引用函数，模块本身不加载 terser（terser 是在 createScriptMinifier 里懒加载的）
-const {scrambleStrings} = require('./minify-script');
+const {hardenScript, scrambleStrings, resolveHelperNames} = require('./minify-script');
 
 /** 懒加载 scratch-vm 的内部模块：只有真正用预编译时才需要它们。 */
 const loadCompiler = () => {
@@ -123,22 +123,22 @@ const describeExtensions = (vm, sources, extensionURLs, cache, sb3) => {
 };
 
 /**
- * 编译单个脚本（或过程），同时把生成的 factory 源码文本取出来。
+ * 编译单个脚本（或过程），**只拿未压缩的源码**，不做任何压缩/混淆。
  *
- * 如果提供了 minifier，会对源码做压缩/改名；压完立刻用它自己求值一次做自检，
- * 一旦压坏了（求值不出函数）就自动退回未压缩的源码。
+ * 为什么把压缩拆出去：自定义积木的变体名（`Z<proccode>` / `W<proccode>`）里带着
+ * proccode 原文 —— 也就是「自定义积木的名字和参数形状」。它既出现在 `packed.p` 的键上，
+ * 也出现在生成码的 `thread.procedures["Z..."]` 里。要把它换成无意义代号，
+ * 必须**在压缩之前**同时改掉键和源码里的字面量（压缩之后字符串已经进表了，改不动）。
+ * 所以这里只产出原源码，改名和压缩都在 compileThread 里按顺序做。
  *
  * @param {object} script 中间表示里的脚本对象（ir.entry 或 ir.procedures[变体]）
  * @param {object} ir 中间表示
  * @param {object} target 目标（角色/舞台）
  * @param {object} deps loadCompiler() 的结果
- * @param {object} [context] {minifier, minifyStats}
- * @returns {{fn: Function, source: string, rawSource: string}}
- *          source 是**要内嵌进索引**的源码（压缩过就是压缩版）；
- *          rawSource 一定是未压缩版 —— 依赖扫描必须用它，见下面的注释。
+ * @returns {{fn: Function, rawSource: string}}
  */
-const compileOne = (script, ir, target, deps, context) => {
-  const {JSGenerator, jsexecute} = deps;
+const compileOneRaw = (script, ir, target, deps) => {
+  const {JSGenerator} = deps;
   const generator = new JSGenerator(script, ir, target);
   let source = null;
   const previousApparatus = JSGenerator.testingApparatus;
@@ -159,49 +159,102 @@ const compileOne = (script, ir, target, deps, context) => {
   } finally {
     JSGenerator.testingApparatus = previousApparatus;
   }
+  return {fn, rawSource: source};
+};
 
-  // ⚠️ 压缩会把工厂函数的形参 `runtime` 改名（terser 的 mangle 会重命名参数），
-  //    于是 `runtime.getOpcodeFunction("music_xxx")` 变成 `n.getOpcodeFunction("music_xxx")`。
-  //    依赖扫描（collectRuntimeRefs）靠这段文本找扩展，所以**必须扫未压缩源码**。
-  //    踩过的坑：曾经直接在压缩后的产物上扫，结果扩展需求全空，
-  //    运行时报 `blockFunction is not a function`。
-  if (context && typeof context.minifier === 'function') {
-    const minified = minifyWithFallback(source, jsexecute, context);
-    if (typeof minified === 'string') return {fn, source: minified, rawSource: source};
+/** 与 jsgen 里 `sanitize()` 完全一致的转义（`JSON.stringify(s).slice(1,-1)`） */
+const sanitizeSourceString = (value) => JSON.stringify(value).slice(1, -1);
+
+/**
+ * 把自定义积木的变体名换成无意义代号（`Z我的积木%s` → `#0`）。
+ *
+ * 变体名会同时出现在两个地方，必须一起改：
+ *   1. `packed.p` 的键（运行时 `thread.procedures[键]` 靠它取函数）
+ *   2. 生成码里的字符串字面量 `thread.procedures["Z我的积木%s"]`
+ * 两边一致才不会挂 —— 而代号本身不带任何语义，proccode 就此消失。
+ *
+ * 换掉之后 `p` 的键长这样：{ '#0': '…', '#1': '…' }，一眼看不出作品有几个自定义积木、
+ * 叫什么名字、参数是什么形状。
+ *
+ * @param {object} rawSources 变体名 -> 原源码
+ * @returns {{sources: object, variants: string[]}} variants 是改名后的代号列表
+ */
+const obfuscateProcedureVariants = (rawSources) => {
+  const variants = Object.keys(rawSources).filter((key) => key !== ENTRY_KEY);
+  if (variants.length === 0) return {sources: rawSources, variants: []};
+
+  // 代号不能和源码里已有的字面量撞（极端情况：作品的 proccode 本身就是 "#0"）
+  const allSources = Object.values(rawSources).join('\n');
+  const tokenOf = new Map();
+  const used = new Set();
+  variants.forEach((variant, index) => {
+    let token = `#${index}`;
+    let suffix = 0;
+    while (used.has(token) || allSources.indexOf(`"${sanitizeSourceString(token)}"`) !== -1) {
+      suffix += 1;
+      token = `#${index}_${suffix}`;
+    }
+    used.add(token);
+    tokenOf.set(variant, token);
+  });
+
+  const sources = {};
+  for (const key of Object.keys(rawSources)) {
+    let source = rawSources[key];
+    for (const [variant, token] of tokenOf) {
+      const needle = `"${sanitizeSourceString(variant)}"`;
+      if (source.indexOf(needle) === -1) continue;
+      source = source.split(needle).join(`"${sanitizeSourceString(token)}"`);
+    }
+    sources[key === ENTRY_KEY ? ENTRY_KEY : tokenOf.get(key)] = source;
   }
-
-  return {fn, source, rawSource: source};
+  return {sources, variants: Array.from(tokenOf.values())};
 };
 
 /**
- * 压缩 → 字符串表混淆 → 自检。任何一步出问题都退回上一个能用的版本
+ * 压缩 → 结构硬化 → 自检。任何一步出问题都退回上一个能用的版本
  * —— 保护可以打折，产物不能打不开。
  *
- * 两级都是「先做、再求值自检、坏了就退」：
+ * 三级都是「先做、再求值自检、坏了就退」：
  *   1. terser 压缩（体积）
- *   2. 字符串表（可读性）—— 失败就退回压缩版，压缩版也失败就退回原源码
+ *   2. 全套结构硬化（字符串表 + 属性名查表 + helper 别名 + 切断 return 链）
+ *   3. 只做字符串表（历史行为，硬化失败时的中间兜底）
  *
  * @returns {string|null} 可直接内嵌进索引的源码；全失败时返回 null（调用方用原源码）
  */
 const minifyWithFallback = (source, jsexecute, context) => {
-  const {minifier, minifyStats, scramble = true} = context;  try {
+  const {minifier, minifyStats, scramble = true, helperNames} = context;
+  try {
     const minified = minifier(source);
     if (typeof minified !== 'string' || minified.length === 0) return null;
     // 压缩后必须仍然求值出函数，否则说明优化动坏了语义
     if (typeof jsexecute.scopedEval(minified) !== 'function') return null;
 
+    const accept = (candidate) => typeof candidate === 'string' && candidate.length > 0 &&
+      typeof jsexecute.scopedEval(candidate) === 'function';
+
     let finalSource = minified;
     if (scramble) {
+      let hardened = null;
       try {
-        const scrambled = scrambleStrings(minified);
-        // 字符串表变换同样要自检：坏掉就保留压缩版，不要连压缩一起丢掉
-        if (typeof scrambled === 'string' && scrambled.length > 0 &&
-            typeof jsexecute.scopedEval(scrambled) === 'function') {
-          finalSource = scrambled;
-        }
+        hardened = hardenScript(minified, {helperNames});
       } catch (e) {
-        // 混淆失败不影响正确性，静默用压缩版
+        // 硬化本身抛错（例如 terser 解析失败）：不影响正确性，退回压缩版
+        if (minifyStats) minifyStats.hardenFailed += 1;
       }
+      if (typeof hardened === 'string' && hardened.length > 0) {
+        if (accept(hardened)) {
+          finalSource = hardened;
+          if (minifyStats) minifyStats.hardened += 1;
+        } else {
+          // 硬化把语义动坏了：退到「只抽字符串表」，至少别丢掉这层
+          if (minifyStats) minifyStats.hardenFailed += 1;
+          const partial = scrambleStrings(minified);
+          if (accept(partial)) finalSource = partial;
+        }
+      }
+      // hardened === null 且没抛错 = 这份源码里没有可硬化的东西（既没有长字符串、
+      // 也没有敏感属性访问和 return 链）。这不是失败，不要计进 hardenFailed。
     }
 
     if (minifyStats) {
@@ -223,28 +276,42 @@ const minifyWithFallback = (source, jsexecute, context) => {
 
 /**
  * 编译一个脚本线程（与该脚本同属一个目标的所有自定义积木也会一起编译）。
+ *
+ * 顺序不能换：
+ *   1. 编译出**未压缩**原源码（依赖扫描必须用它 —— 压缩会把 factory 的形参 `runtime` 改名，
+ *      压缩版里再也扫不到 `runtime.getOpcodeFunction(...)`）
+ *   2. 把自定义积木变体名换成代号（键 + 源码字面量一起改，必须在压缩之前）
+ *   3. 压缩 + 结构硬化（每步都自检，坏了往下退）
  */
 const compileThread = (thread, deps, context) => {
-  const {IRGenerator, IROptimizer} = deps;
+  const {IRGenerator, IROptimizer, jsexecute} = deps;
   const ir = new IRGenerator(thread).generate();
   new IROptimizer(ir).optimize();
 
   const target = thread.target;
-  const entry = compileOne(ir.entry, ir, target, deps, context);
-
-  const sources = {[ENTRY_KEY]: entry.source};
-  // 未压缩的一份，只给依赖扫描用（压缩会改掉形参名，见 compileOne 里的说明）
-  const rawSources = {[ENTRY_KEY]: entry.rawSource};
+  const rawByVariant = {};
+  rawByVariant[ENTRY_KEY] = compileOneRaw(ir.entry, ir, target, deps).rawSource;
   for (const variant of Object.keys(ir.procedures)) {
     // 变体名形如 Z<proccode>（非跳帧）/ W<proccode>（跳帧），与 jsexecute 的约定一致
-    const compiled = compileOne(ir.procedures[variant], ir, target, deps, context);
-    sources[variant] = compiled.source;
-    rawSources[variant] = compiled.rawSource;
+    rawByVariant[variant] = compileOneRaw(ir.procedures[variant], ir, target, deps).rawSource;
+  }
+
+  const {sources: rawSources, variants} = obfuscateProcedureVariants(rawByVariant);
+
+  const sources = {};
+  for (const key of Object.keys(rawSources)) {
+    if (!context) {
+      sources[key] = rawSources[key];
+      continue;
+    }
+    const processed = minifyWithFallback(rawSources[key], jsexecute, context);
+    sources[key] = typeof processed === 'string' ? processed : rawSources[key];
   }
 
   return {
     sources,
-    rawSources,
+    rawSources: rawByVariant,
+    renamedVariants: variants,
     executableHat: !!ir.entry.executableHat
   };
 };
@@ -281,11 +348,13 @@ const compileProject = (vm, options = {}) => {
     activeMinifier = require('./minify-script').createScriptMinifier();
   }
   const minifyStats = activeMinifier
-    ? {count: 0, failed: 0, originalBytes: 0, minifiedBytes: 0, firstError: null}
+    ? {count: 0, failed: 0, originalBytes: 0, minifiedBytes: 0, firstError: null,
+      hardened: 0, hardenFailed: 0}
     : null;
-  // scramble: 在压缩之外再做一层「字符串抽表」，让生成码里的文案/变量 id 不再可读
+  // scramble: 在压缩之外再做一层「结构硬化」，让生成码不再是编译器产物的那个形状
+  // helperNames: 从 jsexecute 现算，避免把不存在的 helper 名别名化（那会 ReferenceError）
   const context = activeMinifier
-    ? {minifier: activeMinifier, minifyStats, scramble}
+    ? {minifier: activeMinifier, minifyStats, scramble, helperNames: resolveHelperNames(deps.jsexecute)}
     : null;
 
   const targets = [];
@@ -294,6 +363,8 @@ const compileProject = (vm, options = {}) => {
   /** @type {Map<string, string>} 扩展 id -> URL（'' 表示内置扩展） */
   const extensionRequirements = new Map();
   const addonCodes = new Set();
+  /** 被改成代号的自定义积木变体（`目标名|代号`，跨脚本去重） */
+  const renamedVariantsSeen = new Set();
   let scriptCount = 0;
   let compiledCount = 0;
   let sourceBytes = 0;
@@ -309,7 +380,7 @@ const compileProject = (vm, options = {}) => {
       thread.target = target;
       thread.blockContainer = target.blocks;
       try {
-        const {sources, rawSources, executableHat} = compileThread(thread, deps, context);
+        const {sources, rawSources, renamedVariants, executableHat} = compileThread(thread, deps, context);
         const sourceList = Object.values(sources);
         // ⚠️ 依赖扫描用未压缩源码：压缩会把 factory 的形参 `runtime` 改名，
         //    压缩版里再也扫不到 `runtime.getOpcodeFunction(...)`
@@ -331,7 +402,10 @@ const compileProject = (vm, options = {}) => {
           if (!usedIds.includes(item.id)) usedIds.push(item.id);
         }
 
-        const packed = {e: sources[ENTRY_KEY], h: executableHat};
+        const packed = {e: sources[ENTRY_KEY]};
+        // 不可执行的帽子是多数情况：只在为真时才写这个字段，
+        // 少一个恒为 false 的键，也就少一条「这个脚本是不是帽子」的现成线索
+        if (executableHat) packed.h = 1;
         if (usedIds.length > 0) packed.x = encodeScriptExtensions(targetExtensionIds, usedIds);
         const procedures = {};
         let hasProcedures = false;
@@ -343,6 +417,8 @@ const compileProject = (vm, options = {}) => {
         if (hasProcedures) packed.p = procedures;
         scripts[topBlockId] = packed;
         compiledCount += 1;
+        // 同一目标的每个脚本都带着同一套过程，所以按「目标名 + 代号」去重
+        for (const variant of renamedVariants) renamedVariantsSeen.add(`${target.getName()}|${variant}`);
         for (const source of sourceList) sourceBytes += source.length;
       } catch (error) {
         // 编译不了的脚本会被原样保留积木（见 skeleton.js），运行时仍然可以走解释器兜底
@@ -384,6 +460,9 @@ const compileProject = (vm, options = {}) => {
       minified: minifyStats ? minifyStats.count : 0,
       minifyFailed: minifyStats ? minifyStats.failed : 0,
       minifyError: minifyStats ? minifyStats.firstError : null,
+      hardened: minifyStats ? minifyStats.hardened : 0,
+      hardenFailed: minifyStats ? minifyStats.hardenFailed : 0,
+      renamedProcedures: renamedVariantsSeen.size,
       originalSourceBytes: minifyStats ? minifyStats.originalBytes : sourceBytes
     }
   };

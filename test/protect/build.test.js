@@ -239,7 +239,13 @@ describe('buildPrecompiledProject', () => {
     // terser 必须真的跑起来（曾经因为把选项写成 format 而不是 output，压缩全程静默失效）
     expect(built.stats.minified).toBe(scriptCount);
     expect(built.stats.minifyFailed).toBe(0);
-    expect(built.stats.sourceBytes).toBeLessThan(built.stats.originalSourceBytes);
+    expect(built.stats.hardened).toBe(scriptCount);
+    expect(built.stats.hardenFailed).toBe(0);
+    // ⚠️ 这个 fixture 只有两个几十字节的小脚本，而结构硬化每份都要付一笔固定开销
+    //    （IIFE 外壳 + 反序字符串表 + helper 别名前奏，约 100 字节）。
+    //    所以小脚本上「压完反而略大」是正常的 —— 真实工程里长字符串和大量重复访问
+    //    会把固定开销摊平并明显净赚（见下面「长文案工程」那条用例）。
+    expect(built.stats.sourceBytes).toBeLessThan(built.stats.originalSourceBytes * 1.15);
   });
 
   test('引用内建扩展（music）的脚本也能编译，并记进索引的扩展表', async () => {
@@ -405,7 +411,8 @@ describe('buildPrecompiledProject', () => {
     const withoutMinify = await build({projectBuffer: b.buffer, projectJSON: b.projectJSON, minify: false});
 
     expect(withMinify.stats.minified).toBe(a.scriptCount);
-    expect(withMinify.stats.sourceBytes).toBeLessThan(withMinify.stats.originalSourceBytes);
+    // 小脚本上硬化有固定开销（见上面那条用例的说明）
+    expect(withMinify.stats.sourceBytes).toBeLessThan(withMinify.stats.originalSourceBytes * 1.15);
 
     expect(withoutMinify.stats.minified).toBe(0);
     expect(withoutMinify.stats.sourceBytes).toBe(withoutMinify.stats.originalSourceBytes);
