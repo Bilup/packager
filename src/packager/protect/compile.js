@@ -275,6 +275,88 @@ const minifyWithFallback = (source, jsexecute, context) => {
 };
 
 /**
+ * 只能出现在「切换」（`control_switch`）内部的积木。
+ *
+ * 编译器把它们直接生成成 `case x:` / `default:` / `break;` 这样的**标签语句**，
+ * 只有嵌在 `switch (...) {` 里才是合法 JS。一旦它们自己成了顶层积木
+ * （工程里常见的「跑题积木」：作者把分支拖到画布上忘了删，project.json 里就留着
+ * `topLevel: true, parent: null`），生成出来的函数体开头就是 `case`，
+ * `scopedEval` 直接 `SyntaxError: Unexpected token 'case'` —— 表现为「这个脚本编译失败」。
+ *
+ * 这类积木在运行时也**永远不会被执行**（没有帽子启动它），所以正确做法不是「编译它」，
+ * 而是「不把它当脚本」。
+ */
+const SWITCH_CLAUSE_OPCODES = new Set([
+  'control_case',
+  'control_default',
+  'control_case_fallthrough',
+  'control_break'
+]);
+
+/**
+ * 只产出值、不可能启动一个线程的积木类型（scratch-vm 的 BlockType 取值）。
+ *
+ * ⚠️ `Boolean` 是首字母大写的，别按直觉小写。
+ */
+const VALUE_ONLY_BLOCK_TYPES = new Set(['reporter', 'Boolean', 'button', 'label', 'xml']);
+
+/**
+ * 造一个「opcode -> blockInfo」查询器。
+ *
+ * 直接读 `runtime._blockInfo`（下划线私有，但 irgen 自己也这么读，是唯一现成的来源）：
+ * 它按扩展分组，每组里 `info.opcode` 是**去掉扩展前缀**的短名。
+ * 查不到就返回 null —— 未知 opcode 仍然按老路子走「编译失败 → 保留积木」，
+ * 不能因为查不到就当成「不是脚本」把整摞积木静默跳过。
+ */
+const createBlockInfoLookup = (runtime) => {
+  const cache = new Map();
+  return (opcode) => {
+    if (cache.has(opcode)) return cache.get(opcode);
+    let found = null;
+    const text = `${opcode || ''}`;
+    const split = text.indexOf('_');
+    if (split > 0 && runtime && Array.isArray(runtime._blockInfo)) {
+      const category = text.slice(0, split);
+      const shortName = text.slice(split + 1);
+      for (const entry of runtime._blockInfo) {
+        if (!entry || entry.id !== category || !Array.isArray(entry.blocks)) continue;
+        found = entry.blocks.find((item) => item && item.info && item.info.opcode === shortName) || null;
+        break;
+      }
+    }
+    cache.set(opcode, found);
+    return found;
+  };
+};
+
+/**
+ * 判断一个顶层积木「根本不是一段脚本」。
+ *
+ * 背景：`target.blocks.getScripts()` 返回的是**所有 topLevel 积木**，其中混着作者
+ * 丢在画布上的散块 —— 悬浮的 reporter（例如 `superutilsadvanced_splitText`）、
+ * 切换分支的子句（`control_default`）、监视器合成出来的 `data_variable`。
+ * 它们既不会被绿旗启动，也没有可执行的语义，但会被当成脚本：
+ *   - 悬浮 reporter → 编译器当「堆叠积木」生成 → `Unknown block type: reporter`
+ *   - 切换子句     → 生成出裸的 `case` / `default` → `Unexpected token 'case'`
+ * 于是每一块都给打包结果贡献一条「编译失败，保留积木」的警告，把**真正的**失败淹掉，
+ * 也让 stats.failed 永远降不到 0。
+ *
+ * @returns {string|null} 不是脚本时返回原因（用于统计），是脚本时返回 null
+ */
+const describeNonScript = (block, lookup) => {
+  if (!block || !block.opcode) return null;
+  if (SWITCH_CLAUSE_OPCODES.has(block.opcode)) {
+    return `${block.opcode} 只能嵌在「切换」积木里`;
+  }
+  const blockInfo = lookup(block.opcode);
+  const blockType = blockInfo && blockInfo.info && blockInfo.info.blockType;
+  if (blockType && VALUE_ONLY_BLOCK_TYPES.has(blockType)) {
+    return `${block.opcode} 是 ${blockType} 积木，不能启动线程`;
+  }
+  return null;
+};
+
+/**
  * 编译一个脚本线程（与该脚本同属一个目标的所有自定义积木也会一起编译）。
  *
  * 顺序不能换：
@@ -359,12 +441,15 @@ const compileProject = (vm, options = {}) => {
 
   const targets = [];
   const failures = [];
+  /** 「根本不是脚本」的顶层积木（悬浮 reporter / 切换子句 / 监视器幽灵块） */
+  const skippedScripts = [];
   const extensionCache = new Map();
   /** @type {Map<string, string>} 扩展 id -> URL（'' 表示内置扩展） */
   const extensionRequirements = new Map();
   const addonCodes = new Set();
   /** 被改成代号的自定义积木变体（`目标名|代号`，跨脚本去重） */
   const renamedVariantsSeen = new Set();
+  const blockInfoOf = createBlockInfoLookup(vm.runtime);
   let scriptCount = 0;
   let compiledCount = 0;
   let sourceBytes = 0;
@@ -375,6 +460,13 @@ const compileProject = (vm, options = {}) => {
     // 本目标的脚本一共用到哪些扩展（按首次出现排序）；脚本上只存下标，省体积
     const targetExtensionIds = [];
     for (const topBlockId of targetScripts) {
+      // getScripts() 给的是「所有 topLevel 积木」，里面混着作者丢在画布上的散块。
+      // 先筛掉「不可能是脚本」的，否则它们会以「编译失败」的形式污染统计与警告
+      const nonScript = describeNonScript(target.blocks.getBlock(topBlockId), blockInfoOf);
+      if (nonScript) {
+        skippedScripts.push({targetName: target.getName(), topBlockId, reason: nonScript});
+        continue;
+      }
       scriptCount += 1;
       const thread = new Thread(topBlockId);
       thread.target = target;
@@ -448,11 +540,15 @@ const compileProject = (vm, options = {}) => {
   return {
     index,
     failures,
+    skippedScripts,
     stats: {
       targets: targets.length,
       scripts: scriptCount,
       compiled: compiledCount,
       failed: failures.length,
+      // 散块（悬浮 reporter / 切换子句 / 监视器幽灵块）不是失败，单独计数：
+      // 它们的积木仍会留在骨架里，但运行时永远不会启动它们
+      skippedNonScripts: skippedScripts.length,
       sourceBytes,
       indexBytes: indexText.length,
       extensions: extensionMap,

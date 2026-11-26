@@ -8,10 +8,17 @@
  *   表现为构建期 `loadProject` 因扩展失败而抛错 → 预编译整份降级
  *   （实测：一个用了 5 个扩展的工程，8 种保护等级的产物索引全是空的）。
  *
- * 垫片只做三件事（够 runner 跑完就行）：
+ * 垫片只做这几件事（够 runner 跑完就行）：
  *   1. `document.createElement('script')` 返回一个可以挂 `src/onload/onerror` 的假元素
  *   2. `document.body.appendChild(script)` 时真的去抓那个 URL、执行源码、再回调 `onload`
  *   3. 顺手补上 `location`（runner 里 `parseURL` 会读 `location.href`）与 `window`
+ *   4. 补几个扩展经常在**顶层**就摸的浏览器 API：`MutationObserver`、
+ *      `localStorage` / `sessionStorage`、`alert`。缺了它们同样是「顶层抛错 → 整个扩展
+ *      加载失败 → 引用它的脚本退回解释器」，而且报错信息看不出跟浏览器环境有关
+ *      （实测 localstorage 扩展在构建期打的是 `ReferenceError: localStorage is not defined`）。
+ *
+ * 渲染器（`renderer.gl` / `canvas` / `exports`）不在这里 —— 它属于 VM 状态而不是全局，
+ * 见 renderer-stub.js。
  *
  * ⚠️ 只在**缺 `document` 时**安装 —— 浏览器里本来就有的东西一概不动。
  *    `restore()` 会把全局恢复原样（Node 的 `navigator` 是只读 getter，恢复时要绕开）。
@@ -21,7 +28,17 @@
  */
 
 /** 垫片会碰的全局键 */
-const SHIMMED_KEYS = ['document', 'location', 'window', 'addEventListener', 'removeEventListener'];
+const SHIMMED_KEYS = [
+  'document',
+  'location',
+  'window',
+  'addEventListener',
+  'removeEventListener',
+  'MutationObserver',
+  'localStorage',
+  'sessionStorage',
+  'alert'
+];
 
 /**
  * 取一个 fetch 实现。
@@ -75,6 +92,56 @@ const loadScriptInto = (element) => {
       if (typeof element.onerror === 'function') element.onerror(error);
     }
   });
+};
+
+/**
+ * `MutationObserver` 替身：构造即登记，但**永不回调**。
+ *
+ * 打包期没有任何东西在改样式，观察者本来也不该被触发；
+ * 只要 `new MutationObserver(fn).observe(canvas, {...})` 不抛错就够。
+ */
+class MutationObserverStub {
+  constructor (callback) {
+    this._callback = callback;
+  }
+
+  observe () {
+    return this;
+  }
+
+  disconnect () {}
+
+  takeRecords () {
+    return [];
+  }
+}
+
+/**
+ * `Storage` 替身（内存版）。
+ *
+ * 用内存而不是「全部返回 null」：有些扩展在加载时会**读-改-写**自己的命名空间，
+ * 只给 null 也行，但给一个真的键值表更接近浏览器，且能顺手消除
+ * `Error reading from local storage …` 这类噪音日志。
+ */
+const createStorageStub = () => {
+  const map = new Map();
+  return {
+    getItem: (key) => (map.has(String(key)) ? map.get(String(key)) : null),
+    setItem: (key, value) => {
+      map.set(String(key), String(value));
+    },
+    removeItem: (key) => {
+      map.delete(String(key));
+    },
+    clear: () => map.clear(),
+    key: (index) => {
+      const keys = Array.from(map.keys());
+      return index >= 0 && index < keys.length ? keys[index] : null;
+    },
+    get length () {
+      return map.size;
+    }
+  };
 };
 
 const createElementStub = (tagName) => {
@@ -152,6 +219,16 @@ const installExtensionLoadShims = () => {
   if (typeof globalThis.addEventListener !== 'function') {
     globalThis.addEventListener = noop;
     globalThis.removeEventListener = noop;
+  }
+  if (typeof globalThis.MutationObserver !== 'function') {
+    globalThis.MutationObserver = MutationObserverStub;
+  }
+  // Node 22 起有 localStorage，但默认要 `--experimental-webstorage` 且需要文件位置，
+  // 直接读会抛 —— 所以无条件覆盖（原生实现给不了的语义这里也不需要）
+  globalThis.localStorage = createStorageStub();
+  globalThis.sessionStorage = createStorageStub();
+  if (typeof globalThis.alert !== 'function') {
+    globalThis.alert = noop;
   }
 
   return () => {

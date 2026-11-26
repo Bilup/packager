@@ -36,9 +36,10 @@ const CUSTOM_EXTENSION_ID = 'protecttest';
  * @param {boolean} [options.withExtension] 是否加入一摞调用 music 扩展的脚本
  * @param {boolean} [options.withPen] 是否加入一摞调用 pen 扩展的脚本
  * @param {boolean} [options.withUnknownExtension] 是否加入一摞调用未知扩展的脚本
+ * @param {boolean} [options.withStrayBlocks] 是否加入「画布散块」（悬浮 reporter / 切换子句）
  */
 const makeProject = async (options = {}) => {
-  const {withExtension = false, withPen = false, withUnknownExtension = false} = options;
+  const {withExtension = false, withPen = false, withUnknownExtension = false, withStrayBlocks = false} = options;
 
   const spriteBlocks = {
     hat: {
@@ -160,6 +161,38 @@ const makeProject = async (options = {}) => {
     };
   }
 
+  if (withStrayBlocks) {
+    // 散块只跟「装了扩展的工程」一起测：扩展积木才有 blockInfo，也才会真的炸
+    extensions.push('music');
+    // 画布散块 1：作者拖出来忘了删的悬浮 reporter（topLevel 但 parent 为 null）。
+    // 用 music 的 reporter 而不是核心积木：核心积木没有 blockInfo，编译器会把它编成
+    // 一段「可视报告」；扩展积木才有 blockInfo，于是被当堆叠积木生成 → 
+    // `Unknown block type: reporter`（PvZ 里那两块 superutilsadvanced_splitText 就是这条）。
+    spriteBlocks.strayReporter = {
+      opcode: 'music_getTempo',
+      next: null,
+      parent: null,
+      inputs: {},
+      fields: {},
+      shadow: false,
+      topLevel: true,
+      x: 0,
+      y: 1000
+    };
+    // 画布散块 2：切换分支的子句。生成码开头就是裸的 `default:` → SyntaxError
+    spriteBlocks.strayClause = {
+      opcode: 'control_default',
+      next: null,
+      parent: null,
+      inputs: {},
+      fields: {},
+      shadow: false,
+      topLevel: true,
+      x: 0,
+      y: 1200
+    };
+  }
+
   const projectJSON = {
     targets: [
       {
@@ -276,6 +309,30 @@ describe('buildPrecompiledProject', () => {
     expect(built.stats.failed).toBe(0);
     expect(Object.keys(built.stats.extensions)).toContain('pen');
     expect(built.index.x).toHaveProperty('pen');
+  });
+
+  test('画布散块（悬浮 reporter / 切换子句）不算脚本，也不进失败统计', async () => {
+    // 回归来源：PvZ·争鸣 里有 2 个悬浮的 superutilsadvanced_splitText、
+    // 1 个 control_case_fallthrough、1 个 control_default（都是 topLevel、parent 为 null）。
+    // 它们被当成脚本编译 → 分别报 `Unknown block type: reporter` 和
+    // `Unexpected token 'case' / 'default'`，占了 4 条「编译失败」，
+    // 让 stats.failed 永远降不到 0，也把真正的失败淹掉。
+    const {buffer, projectJSON} = await makeProject({withStrayBlocks: true});
+
+    const built = await build({projectBuffer: buffer, projectJSON});
+
+    expect(built.ok).toBe(true);
+    // 只有两段真脚本参与编译
+    expect(built.stats.scripts).toBe(2);
+    expect(built.stats.compiled).toBe(2);
+    expect(built.stats.failed).toBe(0);
+    expect(built.stats.skippedNonScripts).toBe(2);
+    const reasons = built.skippedScripts.map((item) => item.reason).join('\n');
+    expect(reasons).toContain('music_getTempo');
+    expect(reasons).toContain('control_default');
+    // 散块不进索引：索引里只该有 hat / plain 两段
+    const sprite = built.index.t.find((target) => target.n === 'Sprite1');
+    expect(Object.keys(sprite.s).sort()).toEqual(['hat', 'plain']);
   });
 
   test('核心扩展（looks / motion）不会被记进扩展表', async () => {

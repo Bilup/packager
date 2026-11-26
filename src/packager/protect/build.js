@@ -19,6 +19,7 @@
 const {compileProject, verifyIndex} = require('./compile');
 const {stripProjectBlocks} = require('./skeleton');
 const {installExtensionLoadShims} = require('./extension-load-shim');
+const {withRendererStub} = require('./renderer-stub');
 
 const PROGRESS = {
   load: 0.15,
@@ -123,6 +124,21 @@ const loadProjectForBuild = async (vm, projectBuffer, compilerOptions) => {
 };
 
 /**
+ * 装扩展 —— **必须在渲染器替身挂着的时候做**。
+ *
+ * text.js / cursor.js 这类扩展在顶层就会读 `renderer.gl` / `renderer.canvas`，
+ * 构建 VM 没有渲染器，直接抛错 → 整个扩展装不上 → 引用它的脚本全部退回解释器。
+ * 替身只在这一段窗口里存在，装完立刻摘掉（理由见 renderer-stub.js）。
+ *
+ * @param {object} vm 构建 VM
+ * @param {string[]} urls 扩展 URL（可能是 data: URI）
+ * @param {string[]} warnings 失败原因写进这里（不致命）
+ */
+const loadExtensionsWithRenderer = async (vm, urls, warnings) => {
+  await withRendererStub(vm, () => loadExtraExtensions(vm, urls, warnings));
+};
+
+/**
  * 加载工程，并尽量让工程引用的扩展就位。
  *
  * ⚠️ 顺序很关键：必须先放开安全策略、再装扩展，最后才 loadProject。
@@ -142,11 +158,15 @@ const loadProjectForBuild = async (vm, projectBuffer, compilerOptions) => {
  * ⚠️ Node 里没有 DOM，而 TurboWarp 的非沙箱扩展是「往页面插 <script>」执行的，
  *    所以下面用 createBuildVm 包了一层最小垫片（见 extension-load-shim.js）。
  *    没有它时一个扩展都装不上，一级降级必然失败。
+ *
+ * ⚠️ 还有一层「渲染器替身」（renderer-stub.js）：扩展的顶层代码会直接摸
+ *    `renderer.gl` / `renderer.canvas`，没有它时 text.js / cursor.js 这类照样装不上。
+ *    替身只覆盖「装扩展」这一步，loadProject 之前必然已经摘掉。
  */
 const createBuildVmInner = async (projectBuffer, compilerOptions, extraExtensions, warnings) => {
   const vm = makeBuildVm(compilerOptions);
   openExtensionSecurity(vm);
-  await loadExtraExtensions(vm, extraExtensions, warnings);
+  await loadExtensionsWithRenderer(vm, extraExtensions, warnings);
   try {
     await loadProjectForBuild(vm, projectBuffer, compilerOptions);
     return vm;
@@ -158,7 +178,7 @@ const createBuildVmInner = async (projectBuffer, compilerOptions, extraExtension
   }
 
   const fallbackVm = makeBuildVm(compilerOptions);
-  await loadExtraExtensions(fallbackVm, extraExtensions, warnings);
+  await loadExtensionsWithRenderer(fallbackVm, extraExtensions, warnings);
   await loadProjectForBuild(fallbackVm, projectBuffer, compilerOptions);
   return fallbackVm;
 };
@@ -247,7 +267,7 @@ const buildPrecompiledProject = async (params) => {
       warnings.push('环境里找不到 terser，预编译脚本不会被压缩（体积更大、也更易读）');
     }
   }
-  const {index, failures, stats} = compileProject(vm, {extensionURLs, minify});
+  const {index, failures, skippedScripts, stats} = compileProject(vm, {extensionURLs, minify});
   if (stats.minifyFailed > 0) {
     warnings.push(`${stats.minifyFailed} 处源码压缩后自检未通过，已退回未压缩版本（首个错误：${stats.minifyError}）`);
   }
@@ -261,6 +281,8 @@ const buildPrecompiledProject = async (params) => {
     indexText: toIndexText(index),
     stats,
     failures,
+    // 散块（悬浮 reporter / 切换子句）：不是失败，但排障时想知道它们被跳过了
+    skippedScripts,
     warnings,
     strippedBuffer: null
   };
