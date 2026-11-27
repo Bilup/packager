@@ -84,6 +84,11 @@ const collectKeepSet = (blocks, rootId, wholeTree) => {
 const stripProjectBlocks = (projectJSON, index, options = {}) => {
   const {extractSkeleton = false} = options;
   const parsed = parseIndexKeys(index);
+  // 索引条目按角色名定位：幽灵积木要从 `entry.s` 里剔除，不能只记账
+  const indexByName = new Map();
+  for (const entry of (index && index.t) || []) {
+    if (entry && entry.n) indexByName.set(entry.n, entry);
+  }
   let strippedScripts = 0;
   let keptScripts = 0;
   let extractedBlocks = 0;
@@ -117,7 +122,16 @@ const stripProjectBlocks = (projectJSON, index, options = {}) => {
     }
 
     for (const scriptId of compiledScripts) {
-      if (!Object.prototype.hasOwnProperty.call(blocks, scriptId)) scriptsMissingFromProject += 1;
+      if (!Object.prototype.hasOwnProperty.call(blocks, scriptId)) {
+        scriptsMissingFromProject += 1;
+        // 从索引里一并剔除。运行时是按「索引里的 topBlockId」逐条去 blocks 里找
+        // 骨架的，找不到就计入 missing —— 而 missing 会让 applyPrecompiled 判定
+        // 「产物不完整」（ok=false）。可这些 id 本来就没有积木，永远不会被执行，
+        // 留着只会把一条真实结论（这份产物装好了）变成一句吓人的告警。
+        const indexEntry = indexByName.get(target.name);
+        if (indexEntry && indexEntry.s) delete indexEntry.s[scriptId];
+        compiledScripts.delete(scriptId);
+      }
     }
 
     const keep = new Set();

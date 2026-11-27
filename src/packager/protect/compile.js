@@ -344,7 +344,15 @@ const createBlockInfoLookup = (runtime) => {
  * @returns {string|null} 不是脚本时返回原因（用于统计），是脚本时返回 null
  */
 const describeNonScript = (block, lookup) => {
-  if (!block || !block.opcode) return null;
+  // 积木 id 在 blocks 里取不到：`getScripts()` 返回的是缓存的顶层 id，而积木本身
+  // 可能已经不在表里（VM 合成的幽灵积木、或反序列化后被丢弃的散块）。
+  // 这类 id 硬编下去只会生成 `case "":` 这种没有 switch 的非法代码 —— 运行时
+  // `scopedEval` 直接语法错误，控制台一条 `unable to compile script`，而包装它的
+  // 那段源码永远装不上。没有积木就没有可执行内容，跳过是唯一正确的处理。
+  // ⚠️ 只有「查不到 blockInfo」（未知扩展的积木）才走编译失败保留积木的老路 ——
+  //    那种积木是真实存在的，只是这一侧不认识它的 opcode。
+  if (!block) return '积木在 blocks 里不存在（脚本缓存过期或 VM 合成的幽灵积木）';
+  if (!block.opcode) return '积木没有 opcode';
   if (SWITCH_CLAUSE_OPCODES.has(block.opcode)) {
     return `${block.opcode} 只能嵌在「切换」积木里`;
   }

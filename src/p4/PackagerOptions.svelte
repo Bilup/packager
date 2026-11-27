@@ -18,7 +18,7 @@
     detectProtectionLevel,
     applyProtectionLevel
   } from './protection-presets';
-  import {progress, currentTask, error, precompileWarnings} from './stores';
+  import {progress, currentTask, error, precompileWarnings, assetWarnings} from './stores';
   import Preview from './preview';
   import deepClone from './deep-clone';
   import Packager from '../packager/web/export';
@@ -167,6 +167,7 @@
     packager.project = projectData.project;
 
     precompileWarnings.reset();
+    assetWarnings.reset();
 
     task.addEventListener('abort', () => {
       packager.abort();
@@ -181,6 +182,10 @@
     // 预编译失败/降级是静默的，必须让用户看见（否则他以为拿到了受保护的产物）
     packager.addEventListener('precompile-warning', ({detail}) => {
       precompileWarnings.update((list) => [...list, {message: detail.message, kind: detail.kind || 'skipped'}]);
+    });
+    // 素材缺失同样是静默的（运行时只表现为灰色问号），必须让用户看见是哪些文件
+    packager.addEventListener('asset-warning', ({detail}) => {
+      assetWarnings.update((list) => [...list, {message: detail.message}]);
     });
     packager.addEventListener('large-asset-fetch', ({detail}) => {
       let thing;
@@ -902,6 +907,15 @@
             <div>{item.message}</div>
           {/each}
         </details>
+      </p>
+    {/if}
+
+    {#if $assetWarnings.length > 0}
+      <p class="warning">
+        {$_('options.assetMissing')}
+        {#each $assetWarnings as item}
+          <div>{item.message}</div>
+        {/each}
       </p>
     {/if}
   </div>

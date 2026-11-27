@@ -12,6 +12,7 @@ import {OutdatedPackagerError} from '../common/errors';
 import {darken} from './colors';
 import {Adapter} from './adapter';
 import encodeBigString from './encode-big-string';
+import {auditAssets, describeAssetAudit} from './audit-assets';
 
 const PROGRESS_LOADED_SCRIPTS = 0.1;
 
@@ -214,6 +215,11 @@ class Packager extends EventTarget {
     this.precompiledStats = null;
     /** @type {Uint8Array|null} 剥离了积木逻辑的 sb3 */
     this.precompiledProjectBuffer = null;
+    // 打包期素材体检（见 auditProjectAssets）
+    /** @type {object|null} 最近一次体检结果 */
+    this.assetAudit = null;
+    /** @type {string[]} 素材缺失的说明文案（给 UI 展示） */
+    this.assetWarnings = [];
   }
 
   abort () {
@@ -1114,6 +1120,46 @@ cd "$(dirname "$0")"
   }
 
   /**
+   * 打包期素材体检。
+   *
+   * 为什么要有这一步：素材在产物里缺失是**完全静默**的 —— 打包不报错，运行时造型变成
+   * 灰色问号、声音变静音，控制台只有一条 log.error。用户在 Bug 报告里能说的只有
+   * 「打包后素材丢了」，而排查需要的恰好是「哪几个文件、属于哪个角色的哪个造型」。
+   *
+   * 所以这里在打包结束前，用**产物里真正会内嵌的那份数据**（getProjectBuffer()，
+   * 开了「移除项目数据」时是剥离后的那份）核对一遍 project.json 引用的每个造型/声音。
+   * 只报告、不改数据：素材为什么缺（工程没带、下载失败、名字对不上）要如实交给用户判断，
+   * 打包器自作主张去补或去删，只会把问题挪到更难查的地方。
+   *
+   * 失败不致命：体检本身出错绝不能拖垮打包，所以整段包在 try 里。
+   */
+  async auditProjectAssets () {
+    this.assetAudit = null;
+    this.assetWarnings = [];
+    try {
+      const JSZip = await getJSZip();
+      const report = await auditAssets({
+        JSZip,
+        projectBuffer: this.getProjectBuffer()
+      });
+      this.assetAudit = report;
+      if (!report.available) return;
+      const message = describeAssetAudit(report);
+      if (message) {
+        this.assetWarnings.push(message);
+        // 走独立的 'asset-warning' 通道：它和「预编译降级」是两码事，
+        // 塞进 precompile-warning 会让 UI 打出「这个包没受保护」的错标题。
+        this.dispatchEvent(new CustomEvent('asset-warning', {detail: {message, missing: report.missing}}));
+      }
+      if (report.duplicates.length > 0) {
+        console.warn('[bilup] zip 里有重名素材，运行时只会取到其中一个：', report.duplicates);
+      }
+    } catch (error) {
+      console.warn('[bilup] 素材体检失败（不影响打包）：', error);
+    }
+  }
+
+  /**
    * 打包期预编译。
    *
    * - precompileScripts: 只把编译结果内嵌进产物，运行时跳过编译（提速）
@@ -1280,7 +1326,11 @@ cd "$(dirname "$0")"
           extensionLoads: extensionResults,
           extensionFailures: precompiledResult.extensions.failed,
           installed: precompiledResult.install.installed,
-          skippedByExtension: precompiledResult.install.skippedByExtension
+          skippedByExtension: precompiledResult.install.skippedByExtension,
+          // 明细必须一起带出来：只报「安装 836 个」的话，出问题时没人知道是哪个脚本、
+          // 哪个角色没装上。这两个数组在产物里通常都是空的，不占体积。
+          failed: precompiledResult.install.failed,
+          missing: precompiledResult.install.missing
         };
         if (failedExtensionLoads.length > 0) {
           // 注意：扩展没加载上不一定影响这份作品（可能有脚本根本不用它），
@@ -1297,6 +1347,52 @@ cd "$(dirname "$0")"
         window.__BILUP_PRECOMPILED__ = null;
         window.__BILUP_PRECOMPILED_KEY__ = null;
       }`;
+  }
+
+  /**
+   * 产物里的素材自检代码。
+   *
+   * 造型加载失败在运行时是**完全静默**的：scratch-vm 把 `costume.skinId` 置成 -1，
+   * 画面里就出现一个灰色问号，声音则退回默认音效（`sound.broken` 记下原素材身份）。
+   * 整个过程只有 `loadCostume` 里一条 log.error，用户能看到的只有「素材丢了」。
+   *
+   * 所以装载完成后主动点一遍，把结果挂到 `window.__BILUP_ASSET_REPORT__` 并打一条汇总日志：
+   * 排查时至少能知道是哪个角色的哪个造型，以及声音有没有一起失败（两者同时坏，指向
+   * 工程数据/素材文件层面的问题；只有造型坏，更可能是渲染层）。
+   *
+   * 只在真的有问题时打日志，正常情况下产物控制台是干净的。
+   */
+  generateAssetReportCode () {
+    return `
+      const reportMissingAssets = () => {
+        const vm = scaffolding.vm;
+        const report = {totalCostumes: 0, totalSounds: 0, brokenCostumes: [], brokenSounds: []};
+        if (vm && vm.runtime && vm.runtime.targets) {
+          for (const target of vm.runtime.targets) {
+            const sprite = target.sprite;
+            if (!sprite) continue;
+            for (const costume of sprite.costumes || []) {
+              report.totalCostumes++;
+              if (costume && costume.skinId === -1) {
+                report.brokenCostumes.push((sprite.name || '(unnamed)') + ' / ' + (costume.name || '(unnamed)'));
+              }
+            }
+            for (const sound of sprite.sounds || []) {
+              report.totalSounds++;
+              if (sound && sound.broken) {
+                report.brokenSounds.push((sprite.name || '(unnamed)') + ' / ' + (sound.name || '(unnamed)'));
+              }
+            }
+          }
+        }
+        window.__BILUP_ASSET_REPORT__ = report;
+        if (report.brokenCostumes.length > 0 || report.brokenSounds.length > 0) {
+          console.error('[bilup] 有素材没能加载：造型 ' + report.brokenCostumes.length + '/' + report.totalCostumes +
+            '，声音 ' + report.brokenSounds.length + '/' + report.totalSounds +
+            '。缺失的造型会显示成灰色问号，声音会退回默认音效。明细见 window.__BILUP_ASSET_REPORT__', report);
+        }
+        return report;
+      };`;
   }
 
   generateObfuscatedScriptTag () {
@@ -1610,15 +1706,39 @@ ${closeTag}`;
         let zip;
         // Allow zip to be GC'd after project loads
         vm.runtime.on('PROJECT_LOADED', () => (zip = null));
-        const findFileInZip = (path) => zip.file(path) || zip.file(new RegExp("^([^/]*/)?" + path + "$"))[0];
+        // 按文件名在 zip 里找素材。
+        // ⚠️ 不能写成 zip.file(new RegExp("^([^/]*/)?" + path + "$"))：path 直接拼进正则，
+        //    文件名里只要有正则元字符（括号、加号、反斜杠之类）就会匹配不到、甚至抛 SyntaxError，
+        //    而这个错误的表现是「造型变成灰色问号」—— 打包期完全看不出来。
+        //    这里改成先精确查、再扫一遍键名，行为可预测（运行时其余几处仍按「一层子目录」找，
+        //    所以放宽到任意深度 + 忽略大小写只会多找到、不会少找到）。
+        const findFileInZip = (path) => {
+          if (!zip || !path) return null;
+          const direct = zip.file(path);
+          if (direct) return direct;
+          const files = zip.files || {};
+          const wanted = String(path).toLowerCase();
+          for (const name of Object.keys(files)) {
+            const entry = files[name];
+            if (!entry || entry.dir) continue;
+            const lower = name.toLowerCase();
+            if (lower === wanted || lower.endsWith('/' + wanted)) return entry;
+          }
+          return null;
+        };
         storage.addHelper({
           load: (assetType, assetId, dataFormat) => {
-            if (!zip) {
-              throw new Error('Zip is not loaded or has been closed');
-            }
             const path = assetId + '.' + dataFormat;
+            if (!zip) {
+              // 工程已经加载完、zip 被释放后又来要素材（自定义字体、二次加载的造型等）。
+              // 这类失败以前只有一句含糊的 'Zip is not loaded or has been closed'，
+              // 现在把文件名一起打出来，否则根本不知道丢的是什么。
+              console.error('[bilup] 工程加载完成后又请求素材，但工程数据已经释放：' + path);
+              throw new Error('Zip is not loaded or has been closed: ' + path);
+            }
             const file = findFileInZip(path);
             if (!file) {
+              console.error('[bilup] 产物里找不到素材文件：' + path);
               throw new Error('Asset is not in zip: ' + path)
             }
             return loadAssetLimited(() => file
@@ -1734,6 +1854,9 @@ ${closeTag}`;
     await this.loadResources();
     this.ensureNotAborted();
     await this.preparePrecompiled();
+    this.ensureNotAborted();
+    // 必须在预编译之后：体检要核对的是「产物里真正内嵌的那份数据」
+    await this.auditProjectAssets();
     this.ensureNotAborted();
     const html = encodeBigString`<!DOCTYPE html>
 <!-- Created with ${WEBSITE} -->
@@ -2186,10 +2309,12 @@ ${closeTag}`;
   </script>` : ''}
   ${await this.generateGetProjectData()}
   <script>
+    ${this.generateAssetReportCode()}
     const run = async () => {
       const projectData = await getProjectData();
       await scaffolding.loadProject(projectData);
       ${this.generatePrecompiledInstallCode()}
+      reportMissingAssets();
       setProgress(1);
       loadingScreen.hidden = true;
       if (${this.options.autoplay}) {

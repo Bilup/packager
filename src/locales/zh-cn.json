@@ -90,6 +90,7 @@
         "precompileSkipped": "警告：预编译被跳过，这个包没有受到保护。原因见下方。",
         "precompilePartial": "提示：部分脚本没能预编译，仍保留了积木，保护不完整。详见下方。",
         "precompileSkippedDetails": "为什么？",
+        "assetMissing": "警告：有素材没能打进产物，它们在运行时不会显示（造型是灰色问号、声音是静音）。详见下方。",
         "antiTamper": "启用防篡改保护（禁用右键菜单、F12、开发者工具）",
         "obfuscateJS": "混淆 JavaScript 代码（Base64 编码 + 运行时 eval 解码）",
         "encryptProjectData": "使用随机 XOR 密钥加密项目数据",

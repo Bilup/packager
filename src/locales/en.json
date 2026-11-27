@@ -582,6 +582,9 @@
     "precompileSkippedDetails": {
       "string": "Why?"
     },
+    "assetMissing": {
+      "string": "Warning: some assets could not be packed, so they will not appear at runtime (costumes show as a grey question mark, sounds are silent). See details below."
+    },
     "antiTamper": {
       "string": "Enable anti-tamper measures (disable right-click, F12, DevTools)"
     },

@@ -27,6 +27,16 @@ export const currentTask = writable(null);
 export const precompileWarnings = writable([]);
 precompileWarnings.reset = () => precompileWarnings.set([]);
 
+/**
+ * 打包期素材体检的警告。
+ *
+ * 素材在产物里缺失是静默的（运行时造型变成灰色问号），用户只会看到「素材丢了」，
+ * 所以打包器会在结束时核对一遍并在这里列出来。和 precompileWarnings 分开：
+ * 素材缺失不是「没受到保护」，混在一起会让界面打出错误的标题。
+ */
+export const assetWarnings = writable([]);
+assetWarnings.reset = () => assetWarnings.set([]);
+
 currentTask.replace = (newTask) => {
   currentTask.update((old) => {
     if (old) {

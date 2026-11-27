@@ -90,6 +90,7 @@
         "precompileSkipped": "警告：預編譯被跳過，這個封裝檔沒有受到保護。原因見下方。",
         "precompilePartial": "提示：部分指令碼沒能預編譯，仍保留了積木，保護不完整。詳見下方。",
         "precompileSkippedDetails": "為什麼？",
+        "assetMissing": "警告：有素材沒能打進產物，它們在執行時不會顯示（造型是灰色問號、聲音是靜音）。詳見下方。",
         "antiTamper": "啟用防篡改保護（停用右鍵選單、F12、開發者工具）",
         "obfuscateJS": "混淆 JavaScript 程式碼（Base64 編碼 + 執行時 eval 解碼）",
         "encryptProjectData": "使用隨機 XOR 金鑰加密專案資料",
