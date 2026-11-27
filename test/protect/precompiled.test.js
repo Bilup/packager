@@ -12,7 +12,9 @@ import {
   verifyRuntimeRefs
 } from '../../src/scaffolding/precompiled';
 
-const FIXTURES = path.join(__dirname, '..', '..', 'node_modules', 'scratch-vm', 'test', 'fixtures');
+// 夹具固定放在仓库里：scratch-vm 新版 tarball 已不再携带 test/fixtures，
+// 直接读 node_modules 会在升级依赖时整片测试报 ENOENT。
+const FIXTURES = path.join(__dirname, '..', 'fixtures', 'vm');
 
 const readFixture = (relative) => fs.readFileSync(path.join(FIXTURES, relative));
 

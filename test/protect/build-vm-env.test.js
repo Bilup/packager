@@ -32,7 +32,8 @@ import ScratchStorage from '@bilup/scratch-storage';
 
 import {buildPrecompiledProject} from '../../src/packager/protect/build';
 
-const FIXTURES = path.join(__dirname, '..', '..', 'node_modules', 'scratch-vm', 'test', 'fixtures');
+// 夹具固定放在仓库里：scratch-vm 新版 tarball 已不再携带 test/fixtures。
+const FIXTURES = path.join(__dirname, '..', 'fixtures', 'vm');
 // 一个干净的、没有扩展依赖的小工程
 const BASE_FIXTURE = path.join('execute', 'tw-forkphorus-515-wait-zero-seconds-in-warp-mode.sb3');
 
