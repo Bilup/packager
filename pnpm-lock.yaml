@@ -88,8 +88,8 @@ importers:
         specifier: https://github.com/Bilup/scratch-audio/tarball/4a4e4b225280eb4541d6997aa22f678a35ab1ae6
         version: https://github.com/Bilup/scratch-audio/tarball/4a4e4b225280eb4541d6997aa22f678a35ab1ae6
       scratch-render:
-        specifier: https://github.com/Bilup/scratch-render/tarball/25178960593a44dd2530959aa5daaf49adf7d710
-        version: https://github.com/Bilup/scratch-render/tarball/25178960593a44dd2530959aa5daaf49adf7d710(webpack@4.47.0)
+        specifier: https://github.com/Bilup/scratch-render/tarball/6f7f6de30839e112594659379bc9269eda4d0f34
+        version: https://github.com/Bilup/scratch-render/tarball/6f7f6de30839e112594659379bc9269eda4d0f34(webpack@4.47.0)
       scratch-vm:
         specifier: https://codeload.github.com/Bilup/scratch-vm/tar.gz/6704512d971cdbd8b156677e207dbe7d4cb23a54
         version: https://codeload.github.com/Bilup/scratch-vm/tar.gz/6704512d971cdbd8b156677e207dbe7d4cb23a54(@bilup/scratch-svg-renderer@https://github.com/Bilup/scratch-svg-renderer/tarball/6ce586a4ad1b9b98441eee6d7304f529be0ae9ef(scratch-render-fonts@https://codeload.github.com/Bilup/scratch-render-fonts/tar.gz/d09642667e6b3ca7cf9420cd92350ce177694ad5))(eslint@10.15.0)(webpack@4.47.0)
@@ -4462,8 +4462,8 @@ packages:
     resolution: {tarball: https://codeload.github.com/Bilup/scratch-render-fonts/tar.gz/d09642667e6b3ca7cf9420cd92350ce177694ad5}
     version: 1.0.0
 
-  scratch-render@https://github.com/Bilup/scratch-render/tarball/25178960593a44dd2530959aa5daaf49adf7d710:
-    resolution: {integrity: sha512-8N9DpIIRQUbxDi9yitjnLx+T7ObHnPeWvBUvjffs/WpIATzPG+/Y6r07w0avC6oP9LHpyXXK+QidcUwoKa7WtQ==, tarball: https://github.com/Bilup/scratch-render/tarball/25178960593a44dd2530959aa5daaf49adf7d710}
+  scratch-render@https://github.com/Bilup/scratch-render/tarball/6f7f6de30839e112594659379bc9269eda4d0f34:
+    resolution: {integrity: sha512-E+Kcno7U12BC4NVE2jJy6YL0QZ1fUpuFNkmCrxKeDTzCedeMnsPxNWWAJYEw3WWn/AriwHQwnugThYgm/rDNvA==, tarball: https://github.com/Bilup/scratch-render/tarball/6f7f6de30839e112594659379bc9269eda4d0f34}
     version: 0.1.0
 
   scratch-sb1-converter@0.2.7:
@@ -10770,7 +10770,7 @@ snapshots:
     dependencies:
       base64-loader: 1.0.0
 
-  scratch-render@https://github.com/Bilup/scratch-render/tarball/25178960593a44dd2530959aa5daaf49adf7d710(webpack@4.47.0):
+  scratch-render@https://github.com/Bilup/scratch-render/tarball/6f7f6de30839e112594659379bc9269eda4d0f34(webpack@4.47.0):
     dependencies:
       '@bilup/scratch-svg-renderer': https://codeload.github.com/Bilup/scratch-svg-renderer/tar.gz/cb48d4ab124c86cd355f500a4abdb41b3a560af8(scratch-render-fonts@https://codeload.github.com/Bilup/scratch-render-fonts/tar.gz/d09642667e6b3ca7cf9420cd92350ce177694ad5)
       '@turbowarp/ancient-hull.js': 0.2.13
